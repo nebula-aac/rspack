@@ -5,26 +5,31 @@
 extern crate napi_derive;
 extern crate rspack_allocator;
 
-use std::pin::Pin;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::{pin::Pin, str::FromStr as _};
 
 use compiler::{Compiler, CompilerState, CompilerStateGuard};
 use napi::bindgen_prelude::*;
-use rspack_binding_options::BuiltinPlugin;
 use rspack_core::{Compilation, PluginExt};
 use rspack_error::Diagnostic;
-use rspack_fs_node::{AsyncNodeWritableFileSystem, ThreadsafeNodeFS};
+use rspack_fs::IntermediateFileSystem;
+use rspack_fs_node::{NodeFileSystem, ThreadsafeNodeFS};
+use rspack_napi::napi::bindgen_prelude::within_runtime_if_available;
 
 mod compiler;
+mod diagnostic;
 mod panic;
 mod plugins;
 mod resolver_factory;
 
+pub use diagnostic::*;
 use plugins::*;
 use resolver_factory::*;
-use rspack_binding_options::*;
 use rspack_binding_values::*;
-use rspack_tracing::chrome::FlushGuard;
+use rspack_tracing::{ChromeTracer, OtelTracer, StdoutTracer, Tracer};
+use tracing::Level;
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt as _, Layer, Registry};
 
 #[napi]
 pub struct Rspack {
@@ -35,13 +40,16 @@ pub struct Rspack {
 
 #[napi]
 impl Rspack {
+  #[allow(clippy::too_many_arguments)]
   #[napi(constructor)]
   pub fn new(
     env: Env,
+    compiler_path: String,
     options: RawOptions,
     builtin_plugins: Vec<BuiltinPlugin>,
     register_js_taps: RegisterJsTaps,
     output_filesystem: ThreadsafeNodeFS,
+    intermediate_filesystem: Option<ThreadsafeNodeFS>,
     mut resolver_factory_reference: Reference<JsResolverFactory>,
   ) -> Result<Self> {
     tracing::info!("raw_options: {:#?}", &options);
@@ -64,11 +72,26 @@ impl Rspack {
       (*resolver_factory_reference).get_resolver_factory(compiler_options.resolve.clone());
     let loader_resolver_factory = (*resolver_factory_reference)
       .get_loader_resolver_factory(compiler_options.resolve_loader.clone());
+
+    let intermediate_filesystem: Option<Arc<dyn IntermediateFileSystem>> =
+      if let Some(fs) = intermediate_filesystem {
+        Some(Arc::new(NodeFileSystem::new(fs).map_err(|e| {
+          Error::from_reason(format!("Failed to create intermediate filesystem: {e}",))
+        })?))
+      } else {
+        None
+      };
+
     let rspack = rspack_core::Compiler::new(
+      compiler_path,
       compiler_options,
       plugins,
-      AsyncNodeWritableFileSystem::new(output_filesystem)
-        .map_err(|e| Error::from_reason(format!("Failed to create writable filesystem: {e}",)))?,
+      rspack_binding_values::buildtime_plugins::buildtime_plugins(),
+      Some(Arc::new(NodeFileSystem::new(output_filesystem).map_err(
+        |e| Error::from_reason(format!("Failed to create writable filesystem: {e}",)),
+      )?)),
+      intermediate_filesystem,
+      None,
       Some(resolver_factory),
       Some(loader_resolver_factory),
     );
@@ -87,7 +110,7 @@ impl Rspack {
 
   /// Build with the given option passed to the constructor
   #[napi(ts_args_type = "callback: (err: null | Error) => void")]
-  pub fn build(&mut self, env: Env, reference: Reference<Rspack>, f: JsFunction) -> Result<()> {
+  pub fn build(&mut self, env: Env, reference: Reference<Rspack>, f: Function) -> Result<()> {
     unsafe {
       self.run(env, reference, |compiler, _guard| {
         callbackify(env, f, async move {
@@ -115,7 +138,7 @@ impl Rspack {
     reference: Reference<Rspack>,
     changed_files: Vec<String>,
     removed_files: Vec<String>,
-    f: JsFunction,
+    f: Function,
   ) -> Result<()> {
     use std::collections::HashSet;
 
@@ -177,7 +200,14 @@ impl Rspack {
   }
 
   fn cleanup_last_compilation(&self, compilation: &Compilation) {
-    JsCompilationWrapper::cleanup(compilation.id());
+    let compilation_id = compilation.id();
+
+    JsCompilationWrapper::cleanup_last_compilation(compilation_id);
+    JsModuleWrapper::cleanup_last_compilation(compilation_id);
+    JsChunkWrapper::cleanup_last_compilation(compilation_id);
+    JsChunkGroupWrapper::cleanup_last_compilation(compilation_id);
+    JsDependencyWrapper::cleanup_last_compilation(compilation_id);
+    JsDependenciesBlockWrapper::cleanup_last_compilation(compilation_id);
   }
 }
 
@@ -190,7 +220,7 @@ fn concurrent_compiler_error() -> Error {
 
 #[derive(Default)]
 enum TraceState {
-  On(Option<FlushGuard>),
+  On(Box<dyn Tracer>),
   #[default]
   Off,
 }
@@ -206,7 +236,9 @@ fn print_error_diagnostic(e: rspack_error::Error, colored: bool) -> String {
     .expect("should print diagnostics")
 }
 
-static GLOBAL_TRACE_STATE: Mutex<TraceState> = Mutex::new(TraceState::Off);
+thread_local! {
+  static GLOBAL_TRACE_STATE: Mutex<TraceState> = const { Mutex::new(TraceState::Off) };
+}
 
 /**
  * Some code is modified based on
@@ -218,37 +250,60 @@ static GLOBAL_TRACE_STATE: Mutex<TraceState> = Mutex::new(TraceState::Off);
 #[napi]
 pub fn register_global_trace(
   filter: String,
-  #[napi(ts_arg_type = "\"chrome\" | \"logger\"")] layer: String,
+  #[napi(ts_arg_type = "\"chrome\" | \"logger\" | \"otel\"")] layer: String,
   output: String,
-) {
-  let mut state = GLOBAL_TRACE_STATE
-    .lock()
-    .expect("Failed to lock GLOBAL_TRACE_STATE");
-  if matches!(&*state, TraceState::Off) {
-    let guard = match layer.as_str() {
-      "chrome" => rspack_tracing::enable_tracing_by_env_with_chrome_layer(&filter, &output),
-      "logger" => {
-        rspack_tracing::enable_tracing_by_env(&filter, &output);
-        None
+) -> anyhow::Result<()> {
+  GLOBAL_TRACE_STATE.with(|state| {
+    let mut state = state.lock().expect("Failed to lock GLOBAL_TRACE_STATE");
+    if let TraceState::Off = *state {
+      let mut tracer: Box<dyn Tracer> = match layer.as_str() {
+        "chrome" => Box::new(ChromeTracer::default()),
+        "otel" => Box::new(within_runtime_if_available(OtelTracer::default)),
+        "logger" => Box::new(StdoutTracer),
+        _ => anyhow::bail!(
+          "Unexpected layer: {}, supported layers: 'chrome', 'logger', 'console' and 'otel' ",
+          layer
+        ),
+      };
+      if let Some(layer) = tracer.setup(&output) {
+        if let Ok(default_level) = Level::from_str(&filter) {
+          let filter = tracing_subscriber::filter::Targets::new()
+            .with_target("rspack_core", default_level)
+            .with_target("node_binding", default_level)
+            .with_target("rspack_loader_swc", default_level)
+            .with_target("rspack_loader_runner", default_level)
+            .with_target("rspack_plugin_javascript", default_level)
+            .with_target("rspack_resolver", Level::WARN);
+          tracing_subscriber::registry()
+            .with(<_ as Layer<Registry>>::with_filter(layer, filter))
+            .init();
+        } else {
+          // SAFETY: we know that trace_var is `Ok(String)` now,
+          // for the second unwrap, if we can't parse the directive, then the tracing result would be
+          // unexpected, then panic is reasonable
+          let filter = EnvFilter::builder()
+            .with_regex(true)
+            .parse(filter)
+            .expect("Parse tracing directive syntax failed, for details about the directive syntax you could refer https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#directives");
+          tracing_subscriber::registry()
+            .with(<_ as Layer<Registry>>::with_filter(layer, filter))
+            .init();
+        }
       }
-      _ => panic!("not supported layer type:{layer}"),
-    };
-    let new_state = TraceState::On(guard);
-    *state = new_state;
-  }
+      let new_state = TraceState::On(tracer);
+      *state = new_state;
+    }
+    Ok(())
+  })
 }
 
 #[napi]
 pub fn cleanup_global_trace() {
-  let mut state = GLOBAL_TRACE_STATE
-    .lock()
-    .expect("Failed to lock GLOBAL_TRACE_STATE");
-  if let TraceState::On(guard) = &mut *state
-    && let Some(g) = guard.take()
-  {
-    g.flush();
-    drop(g);
-    let new_state = TraceState::Off;
-    *state = new_state;
-  }
+  GLOBAL_TRACE_STATE.with(|state| {
+    let mut state = state.lock().expect("Failed to lock GLOBAL_TRACE_STATE");
+    if let TraceState::On(ref mut tracer) = *state {
+      tracer.teardown();
+    }
+    *state = TraceState::Off;
+  });
 }

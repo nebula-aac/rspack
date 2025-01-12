@@ -1,10 +1,16 @@
-use std::{hash::BuildHasherDefault, sync::Arc};
+use std::{any::Any, hash::BuildHasherDefault, sync::Arc};
 
 use dashmap::DashMap;
+use rspack_cacheable::{
+  cacheable,
+  with::{As, AsConverter},
+  DeserializeError, SerializeError,
+};
+use rspack_fs::ReadableFileSystem;
 use rustc_hash::FxHasher;
 
 use super::resolver_impl::Resolver;
-use crate::{DependencyCategory, Resolve};
+use crate::{cache::persistent::CacheableContext, DependencyCategory, Resolve};
 
 #[derive(Debug, Hash, Eq, PartialEq, Clone)]
 // Actually this should be ResolveOptionsWithDependencyCategory, it's a mistake from webpack, but keep the alignment for easily find the code in webpack
@@ -14,6 +20,7 @@ pub struct ResolveOptionsWithDependencyType {
   pub dependency_category: DependencyCategory,
 }
 
+#[cacheable(with=As::<Resolve>)]
 #[derive(Debug)]
 pub struct ResolverFactory {
   base_options: Resolve,
@@ -23,9 +30,15 @@ pub struct ResolverFactory {
   resolvers: DashMap<ResolveOptionsWithDependencyType, Arc<Resolver>, BuildHasherDefault<FxHasher>>,
 }
 
-impl Default for ResolverFactory {
-  fn default() -> Self {
-    Self::new(Resolve::default())
+impl AsConverter<ResolverFactory> for Resolve {
+  fn serialize(data: &ResolverFactory, _ctx: &dyn Any) -> Result<Self, SerializeError> {
+    Ok(data.base_options.clone())
+  }
+  fn deserialize(self, ctx: &dyn Any) -> Result<ResolverFactory, DeserializeError> {
+    let Some(ctx) = ctx.downcast_ref::<CacheableContext>() else {
+      return Err(DeserializeError::NoContext);
+    };
+    Ok(ResolverFactory::new(self, ctx.input_filesystem.clone()))
   }
 }
 
@@ -34,10 +47,10 @@ impl ResolverFactory {
     self.resolver.clear_cache();
   }
 
-  pub fn new(options: Resolve) -> Self {
+  pub fn new(options: Resolve, fs: Arc<dyn ReadableFileSystem>) -> Self {
     Self {
       base_options: options.clone(),
-      resolver: Resolver::new(options),
+      resolver: Resolver::new(options, fs),
       resolvers: Default::default(),
     }
   }

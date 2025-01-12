@@ -19,7 +19,7 @@ use serde_json::Value;
 
 use crate::parser_and_generator::JavaScriptParserAndGenerator;
 
-type DefineValue = HashMap<String, Value>;
+pub type DefineValue = HashMap<String, Value>;
 
 const VALUE_DEP_PREFIX: &str = "webpack/DefinePlugin ";
 
@@ -105,11 +105,7 @@ impl Plugin for DefinePlugin {
     "rspack.DefinePlugin"
   }
 
-  fn apply(
-    &self,
-    ctx: PluginContext<&mut ApplyContext>,
-    _options: &mut CompilerOptions,
-  ) -> Result<()> {
+  fn apply(&self, ctx: PluginContext<&mut ApplyContext>, _options: &CompilerOptions) -> Result<()> {
     ctx
       .context
       .compiler_hooks

@@ -1,6 +1,6 @@
-use std::{collections::HashMap, fmt::Debug};
+use std::collections::HashMap;
 
-use derivative::Derivative;
+use derive_more::Debug;
 use futures::future::BoxFuture;
 use rspack_core::{
   ApplyContext, ChunkGroup, ChunkGroupUkey, Compilation, CompilationAsset, CompilerAfterEmit,
@@ -12,10 +12,9 @@ use rspack_util::size::format_size;
 
 pub type AssetFilterFn = Box<dyn for<'a> Fn(&'a str) -> BoxFuture<'a, Result<bool>> + Sync + Send>;
 
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Debug)]
 pub struct SizeLimitsPluginOptions {
-  #[derivative(Debug = "ignore")]
+  #[debug(skip)]
   pub asset_filter: Option<AssetFilterFn>,
   pub hints: Option<String>,
   pub max_asset_size: Option<f64>,
@@ -41,7 +40,7 @@ impl SizeLimitsPlugin {
         .await
         .expect("run SizeLimitsPlugin asset filter error")
     } else {
-      !asset.info.development
+      !asset.info.development.unwrap_or(false)
     }
   }
 
@@ -243,11 +242,7 @@ impl Plugin for SizeLimitsPlugin {
     "SizeLimitsPlugin"
   }
 
-  fn apply(
-    &self,
-    ctx: PluginContext<&mut ApplyContext>,
-    _options: &mut CompilerOptions,
-  ) -> Result<()> {
+  fn apply(&self, ctx: PluginContext<&mut ApplyContext>, _options: &CompilerOptions) -> Result<()> {
     ctx
       .context
       .compiler_hooks

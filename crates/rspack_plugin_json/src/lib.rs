@@ -1,6 +1,7 @@
 #![feature(let_chains)]
 use std::borrow::Cow;
 
+use cow_utils::CowUtils;
 use json::{
   number::Number,
   object::Object,
@@ -10,12 +11,13 @@ use json::{
   },
   JsonValue,
 };
+use rspack_cacheable::{cacheable, cacheable_dyn};
 use rspack_core::{
   diagnostics::ModuleParseError,
-  rspack_sources::{BoxSource, RawSource, Source, SourceExt},
+  rspack_sources::{BoxSource, RawStringSource, Source, SourceExt},
   BuildMetaDefaultObject, BuildMetaExportsType, ChunkGraph, CompilerOptions, ExportsInfo,
-  GenerateContext, Module, ModuleGraph, ParserAndGenerator, Plugin, RuntimeGlobals, RuntimeSpec,
-  SourceType, UsageState, NAMESPACE_OBJECT_EXPORT,
+  GenerateContext, Module, ModuleGraph, ParseOption, ParserAndGenerator, Plugin, RuntimeGlobals,
+  RuntimeSpec, SourceType, UsageState, NAMESPACE_OBJECT_EXPORT,
 };
 use rspack_error::{
   miette::diagnostic, DiagnosticExt, DiagnosticKind, IntoTWithDiagnosticArray, Result,
@@ -28,9 +30,14 @@ use crate::json_exports_dependency::JsonExportsDependency;
 mod json_exports_dependency;
 mod utils;
 
+#[cacheable]
 #[derive(Debug)]
-struct JsonParserAndGenerator;
+struct JsonParserAndGenerator {
+  pub exports_depth: u32,
+  pub parse: ParseOption,
+}
 
+#[cacheable_dyn]
 impl ParserAndGenerator for JsonParserAndGenerator {
   fn source_types(&self) -> &[SourceType] {
     &[SourceType::JavaScript]
@@ -49,53 +56,68 @@ impl ParserAndGenerator for JsonParserAndGenerator {
       build_info,
       build_meta,
       loaders,
+      module_parser_options,
       ..
     } = parse_context;
     let source = box_source.source();
     let strip_bom_source = source.strip_prefix('\u{feff}');
     let need_strip_bom = strip_bom_source.is_some();
+    let strip_bom_source = strip_bom_source.unwrap_or(&source);
 
-    let parse_result = json::parse(strip_bom_source.unwrap_or(&source)).map_err(|e| {
-      match e {
-        UnexpectedCharacter { ch, line, column } => {
-          let rope = ropey::Rope::from_str(&source);
-          let line_offset = rope.try_line_to_byte(line - 1).expect("TODO:");
-          let start_offset = source[line_offset..]
-            .chars()
-            .take(column)
-            .fold(line_offset, |acc, cur| acc + cur.len_utf8());
-          let start_offset = if need_strip_bom {
-            start_offset + 1
-          } else {
-            start_offset
-          };
-          TraceableError::from_file(
-            source.into_owned(),
-            // one character offset
-            start_offset,
-            start_offset + 1,
-            "Json parsing error".to_string(),
-            format!("Unexpected character {ch}"),
-          )
-          .with_kind(DiagnosticKind::Json)
-          .boxed()
+    // If there is a custom parse, execute it to obtain the returned string.
+    let parse_result_str = module_parser_options
+      .and_then(|p| p.get_json())
+      .and_then(|p| match &p.parse {
+        ParseOption::Func(p) => {
+          let parse_result = p(strip_bom_source.to_string());
+          parse_result.ok()
         }
-        ExceededDepthLimit | WrongType(_) | FailedUtf8Parsing => diagnostic!("{e}").boxed(),
-        UnexpectedEndOfJson => {
-          // End offset of json file
-          let offset = source.len() - 1;
-          TraceableError::from_file(
-            source.into_owned(),
-            offset,
-            offset,
-            "Json parsing error".to_string(),
-            format!("{e}"),
-          )
-          .with_kind(DiagnosticKind::Json)
-          .boxed()
+        _ => None,
+      });
+
+    let parse_result = json::parse(parse_result_str.as_deref().unwrap_or(strip_bom_source))
+      .map_err(|e| {
+        match e {
+          UnexpectedCharacter { ch, line, column } => {
+            let rope = ropey::Rope::from_str(&source);
+            let line_offset = rope.try_line_to_byte(line - 1).expect("TODO:");
+            let start_offset = source[line_offset..]
+              .chars()
+              .take(column)
+              .fold(line_offset, |acc, cur| acc + cur.len_utf8());
+            let start_offset = if need_strip_bom {
+              start_offset + 1
+            } else {
+              start_offset
+            };
+            TraceableError::from_file(
+              source.into_owned(),
+              // one character offset
+              start_offset,
+              start_offset + 1,
+              "Json parsing error".to_string(),
+              format!("Unexpected character {ch}"),
+            )
+            .with_kind(DiagnosticKind::Json)
+            .boxed()
+          }
+          ExceededDepthLimit | WrongType(_) | FailedUtf8Parsing => diagnostic!("{e}").boxed(),
+          UnexpectedEndOfJson => {
+            // End offset of json file
+            let length = source.len();
+            let offset = if length > 0 { length - 1 } else { length };
+            TraceableError::from_file(
+              source.into_owned(),
+              offset,
+              offset,
+              "Json parsing error".to_string(),
+              format!("{e}"),
+            )
+            .with_kind(DiagnosticKind::Json)
+            .boxed()
+          }
         }
-      }
-    });
+      });
 
     let (diagnostics, data) = match parse_result {
       Ok(data) => (vec![], Some(data)),
@@ -114,7 +136,10 @@ impl ParserAndGenerator for JsonParserAndGenerator {
       rspack_core::ParseResult {
         presentational_dependencies: vec![],
         dependencies: if let Some(data) = data {
-          vec![Box::new(JsonExportsDependency::new(data))]
+          vec![Box::new(JsonExportsDependency::new(
+            data,
+            self.exports_depth,
+          ))]
         } else {
           vec![]
         },
@@ -144,9 +169,6 @@ impl ParserAndGenerator for JsonParserAndGenerator {
     let module_graph = compilation.get_module_graph();
     match generate_context.requested_source_type {
       SourceType::JavaScript => {
-        generate_context
-          .runtime_requirements
-          .insert(RuntimeGlobals::MODULE);
         let module = module_graph
           .module_by_identifier(&module.identifier())
           .expect("should have module identifier");
@@ -174,7 +196,7 @@ impl ParserAndGenerator for JsonParserAndGenerator {
         let json_expr = if is_js_object && json_str.len() > 20 {
           Cow::Owned(format!(
             "JSON.parse('{}')",
-            json_str.replace('\\', r"\\").replace('\'', r"\'")
+            json_str.cow_replace('\\', r"\\").cow_replace('\'', r"\'")
           ))
         } else {
           json_str
@@ -183,9 +205,12 @@ impl ParserAndGenerator for JsonParserAndGenerator {
           scope.register_namespace_export(NAMESPACE_OBJECT_EXPORT);
           format!("var {NAMESPACE_OBJECT_EXPORT} = {json_expr}")
         } else {
+          generate_context
+            .runtime_requirements
+            .insert(RuntimeGlobals::MODULE);
           format!(r#"module.exports = {}"#, json_expr)
         };
-        Ok(RawSource::from(content).boxed())
+        Ok(RawStringSource::from(content).boxed())
       }
       _ => panic!(
         "Unsupported source type: {:?}",
@@ -215,11 +240,20 @@ impl Plugin for JsonPlugin {
   fn apply(
     &self,
     ctx: rspack_core::PluginContext<&mut rspack_core::ApplyContext>,
-    _options: &mut CompilerOptions,
+    _options: &CompilerOptions,
   ) -> Result<()> {
     ctx.context.register_parser_and_generator_builder(
       rspack_core::ModuleType::Json,
-      Box::new(|_, _| Box::new(JsonParserAndGenerator {})),
+      Box::new(|p, _| {
+        let p = p
+          .and_then(|p| p.get_json())
+          .expect("should have JsonParserOptions");
+
+        Box::new(JsonParserAndGenerator {
+          exports_depth: p.exports_depth.expect("should have exports_depth"),
+          parse: p.parse.clone(),
+        })
+      }),
     );
 
     Ok(())

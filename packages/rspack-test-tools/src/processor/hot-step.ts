@@ -2,7 +2,8 @@ import path from "node:path";
 import fs from "fs-extra";
 
 import type { Chunk } from "webpack";
-import { escapeEOL, escapeSep, replacePaths } from "../helper";
+import { normalizePlaceholder } from "../helper/expect/placeholder";
+import { escapeSep } from "../helper/win";
 import type { THotStepRuntimeData } from "../runner";
 import type {
 	ECompilerType,
@@ -195,9 +196,12 @@ export class HotSnapshotProcessor<
 			runtime: string[];
 		}> = [];
 		const hotUpdateManifest: Array<{ name: string; content: string }> = [];
-		const changedFiles: string[] = this.updateOptions.changedFiles.map(
-			(i: string) => escapeSep(path.relative(context.getSource(), i))
-		);
+		const changedFiles: string[] =
+			this.updateOptions.updateIndex === 0
+				? []
+				: this.updateOptions.changedFiles.map((i: string) =>
+						escapeSep(path.relative(context.getSource(), i))
+					);
 		changedFiles.sort();
 
 		const hashes: Record<string, string> = {
@@ -223,7 +227,7 @@ export class HotSnapshotProcessor<
 		}
 
 		const replaceContent = (str: string) => {
-			return replacePaths(
+			return normalizePlaceholder(
 				Object.entries(hashes)
 					.reduce((str, [raw, replacement]) => {
 						return str.split(raw).join(replacement);
@@ -400,6 +404,6 @@ ${runtime.javascript.disposedModules.map(i => `- ${i}`).join("\n")}
 
 				`.trim();
 
-		env.expect(escapeEOL(content)).toMatchFileSnapshot(snapshotPath);
+		env.expect(content).toMatchFileSnapshot(snapshotPath);
 	}
 }

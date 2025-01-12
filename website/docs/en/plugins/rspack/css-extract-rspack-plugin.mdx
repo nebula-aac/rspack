@@ -30,7 +30,7 @@ module.exports = {
 };
 ```
 
-## Plugin Options
+## Plugin options
 
 Options for `CssExtractRspackPlugin`.
 
@@ -48,6 +48,7 @@ interface PluginOptions {
   linkType?: string | 'text/css' | false;
   runtime?: boolean;
   pathinfo?: boolean;
+  enforceRelative?: boolean;
 }
 ```
 
@@ -126,10 +127,17 @@ interface PluginOptions {
       description:
         'Whether to include comments in CSS bundles with more detailed path information',
     },
+    {
+      name: '`enforceRelative`',
+      type: '`boolean`',
+      default: 'false',
+      description:
+        'Whether to preserve "\.\/" when generated CSS `url()` is relative',
+    },
   ]}
 />
 
-## Loader Options
+## Loader options
 
 Options for `CssExtractRspackPlugin.loader`.
 
@@ -182,7 +190,7 @@ interface LoaderOptions {
       type: '`boolean`',
       default: 'true',
       description:
-        'whether to use ES module syntax for CSS Modules class name exports in the generated JavaScript module',
+        'whether to use ES modules syntax for CSS Modules class name exports in the generated JavaScript module',
     },
   ]}
 />

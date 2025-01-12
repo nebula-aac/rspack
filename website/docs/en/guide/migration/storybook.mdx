@@ -12,7 +12,7 @@ Storybook Rsbuild requires at least version 8.0 of Storybook. It's highly recomm
 
 :::
 
-## Update Dependencies
+## Update dependencies
 
 First, replace `@storybook/react-webpack5` with [`storybook-react-rsbuild`](https://www.npmjs.com/package/storybook-react-rsbuild) (for Vue projects, use [`storybook-vue3-rsbuild`](https://www.npmjs.com/package/storybook-vue3-rsbuild)), add `@rsbuild/core` and `@rsbuild/plugin-react` (for Vue projects, use `@rsbuild/plugin-vue`).
 
@@ -20,7 +20,7 @@ First, replace `@storybook/react-webpack5` with [`storybook-react-rsbuild`](http
 
 ## Configure Rsbuild
 
-Storybook Rsbuild will automatically load the Rsbuild configuration file from the working directory. Install [`@rsbuild/plugin-react`](https://rsbuild.dev/guide/framework/react) (for Vue projects, install and use [`@rsbuild/plugin-vue`](https://rsbuild.dev/guide/framework/vue3)).
+Storybook Rsbuild will automatically load the Rsbuild configuration file from the working directory. Install [`@rsbuild/plugin-react`](https://rsbuild.dev/guide/framework/react) (for Vue projects, install and use [`@rsbuild/plugin-vue`](https://rsbuild.dev/guide/framework/vue#vue-3)).
 
 ```js
 import { defineConfig } from '@rsbuild/core';
@@ -31,7 +31,7 @@ export default defineConfig({
 });
 ```
 
-## Update Storybook Configuration
+## Update Storybook configuration
 
 Refer to the following configuration to modify the `main.js` configuration of Storybook, and specify `'storybook-react-rsbuild'` as the Storybook framework (for Vue projects, use `'storybook-vue3-rsbuild'`).
 

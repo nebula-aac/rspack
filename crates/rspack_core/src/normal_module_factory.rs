@@ -2,6 +2,7 @@ use std::sync::LazyLock;
 use std::{borrow::Cow, sync::Arc};
 
 use regex::Regex;
+use rspack_cacheable::cacheable;
 use rspack_error::{error, Result};
 use rspack_hook::define_hook;
 use rspack_loader_runner::{get_scheme, Loader, Scheme};
@@ -12,13 +13,14 @@ use swc_core::common::Span;
 
 use crate::{
   diagnostics::EmptyDependency, module_rules_matcher, parse_resource, resolve,
-  stringify_loaders_and_resource, BoxLoader, BoxModule, CompilerOptions, Context, Dependency,
-  DependencyCategory, FuncUseCtx, GeneratorOptions, ModuleExt, ModuleFactory,
-  ModuleFactoryCreateData, ModuleFactoryResult, ModuleIdentifier, ModuleLayer, ModuleRuleEffect,
-  ModuleRuleEnforce, ModuleRuleUse, ModuleRuleUseLoader, ModuleType, NormalModule,
-  ParserAndGenerator, ParserOptions, RawModule, Resolve, ResolveArgs,
-  ResolveOptionsWithDependencyType, ResolveResult, Resolver, ResolverFactory, ResourceData,
-  ResourceParsedData, RunnerContext, SharedPluginDriver,
+  stringify_loaders_and_resource, AssetInlineGeneratorOptions, AssetResourceGeneratorOptions,
+  BoxLoader, BoxModule, CompilerOptions, Context, CssAutoGeneratorOptions, CssAutoParserOptions,
+  CssModuleGeneratorOptions, CssModuleParserOptions, Dependency, DependencyCategory,
+  DependencyRange, FuncUseCtx, GeneratorOptions, ModuleExt, ModuleFactory, ModuleFactoryCreateData,
+  ModuleFactoryResult, ModuleIdentifier, ModuleLayer, ModuleRuleEffect, ModuleRuleEnforce,
+  ModuleRuleUse, ModuleRuleUseLoader, ModuleType, NormalModule, ParserAndGenerator, ParserOptions,
+  RawModule, Resolve, ResolveArgs, ResolveOptionsWithDependencyType, ResolveResult, Resolver,
+  ResolverFactory, ResourceData, ResourceParsedData, RunnerContext, SharedPluginDriver,
 };
 
 define_hook!(NormalModuleFactoryBeforeResolve: AsyncSeriesBail(data: &mut ModuleFactoryCreateData) -> bool);
@@ -136,8 +138,7 @@ impl NormalModuleFactory {
     &self,
     data: &mut ModuleFactoryCreateData,
   ) -> Result<Option<ModuleFactoryResult>> {
-    let dependency = data
-      .dependency
+    let dependency = data.dependencies[0]
       .as_module_dependency()
       .expect("should be module dependency");
     let dependency_type = *dependency.dependency_type();
@@ -216,7 +217,7 @@ impl NormalModuleFactory {
           {
             Some((pos, _)) => &request_without_match_resource[pos..],
             None => {
-              unreachable!("Invalid dependency: {:?}", &data.dependency)
+              unreachable!("Invalid dependency: {:?}", &data.dependencies[0])
             }
           }
         } else {
@@ -232,7 +233,7 @@ impl NormalModuleFactory {
 
         if first_char.is_none() {
           let span = dependency.source_span().unwrap_or_default();
-          return Err(EmptyDependency::new(span).into());
+          return Err(EmptyDependency::new(DependencyRange::new(span.start, span.end)).into());
         }
 
         // See: https://webpack.js.org/concepts/loaders/#inline
@@ -330,7 +331,7 @@ impl NormalModuleFactory {
           span: dependency_source_span,
           // take the options is safe here, because it
           // is not used in after_resolve hooks
-          resolve_options: data.resolve_options.take(),
+          resolve_options: data.resolve_options.clone(),
           resolve_to_context: false,
           optional: dependency_optional,
           file_dependencies: &mut file_dependencies,
@@ -389,7 +390,7 @@ impl NormalModuleFactory {
           } else {
             &resource_data
           },
-          data.dependency.as_ref(),
+          data.dependencies[0].as_ref(),
           data.issuer.as_deref(),
           data.issuer_layer.as_deref(),
         )
@@ -418,7 +419,9 @@ impl NormalModuleFactory {
           ModuleRuleUse::Array(array_use) => Cow::Borrowed(array_use),
           ModuleRuleUse::Func(func_use) => {
             let context = FuncUseCtx {
-              resource: Some(resource_data.resource.clone()),
+              // align with webpack https://github.com/webpack/webpack/blob/899f06934391baede59da3dcd35b5ef51c675dbe/lib/NormalModuleFactory.js#L576
+              // resource shouldn't contain query otherwise it will cause duplicate query in https://github.com/unjs/unplugin/blob/62fdc5ae361d86a6ec39eaef5d8f01e12c6a794d/src/utils.ts#L58
+              resource: resource_data.resource_path.clone().map(|x| x.to_string()),
               real_resource: Some(user_request.clone()),
               issuer: data.issuer.clone(),
               resource_query: resource_data.resource_query.clone(),
@@ -508,7 +511,6 @@ impl NormalModuleFactory {
     } else {
       resource_data.resource.clone()
     };
-    tracing::trace!("resolved uri {:?}", request);
 
     let file_dependency = resource_data.resource_path.clone();
 
@@ -640,7 +642,7 @@ impl NormalModuleFactory {
     Ok(rules)
   }
 
-  fn calculate_resolve_options(&self, module_rules: &[&ModuleRuleEffect]) -> Option<Box<Resolve>> {
+  fn calculate_resolve_options(&self, module_rules: &[&ModuleRuleEffect]) -> Option<Arc<Resolve>> {
     let mut resolved: Option<Resolve> = None;
     for rule in module_rules {
       if let Some(rule_resolve) = &rule.resolve {
@@ -651,7 +653,7 @@ impl NormalModuleFactory {
         }
       }
     }
-    resolved.map(Box::new)
+    resolved.map(Arc::new)
   }
 
   fn calculate_side_effects(&self, module_rules: &[&ModuleRuleEffect]) -> Option<bool> {
@@ -686,30 +688,100 @@ impl NormalModuleFactory {
     parser: Option<ParserOptions>,
     generator: Option<GeneratorOptions>,
   ) -> (Option<ParserOptions>, Option<GeneratorOptions>) {
-    let global_parser = self
-      .options
-      .module
-      .parser
-      .as_ref()
-      .and_then(|p| p.get(module_type))
-      .cloned();
-    let global_generator = self
-      .options
-      .module
-      .generator
-      .as_ref()
-      .and_then(|g| g.get(module_type))
-      .cloned();
+    let global_parser = self.options.module.parser.as_ref().and_then(|p| {
+      let options = p.get(module_type.as_str());
+      match module_type {
+        ModuleType::JsAuto | ModuleType::JsDynamic | ModuleType::JsEsm => {
+          // Merge `module.parser.["javascript/xxx"]` with `module.parser.["javascript"]` first
+          rspack_util::merge_from_optional_with(
+            p.get("javascript").cloned(),
+            options,
+            |javascript_options, options| match (javascript_options, options) {
+              (
+                ParserOptions::Javascript(a),
+                ParserOptions::JavascriptAuto(b)
+                | ParserOptions::JavascriptDynamic(b)
+                | ParserOptions::JavascriptEsm(b),
+              ) => ParserOptions::Javascript(a.merge_from(b)),
+              _ => unreachable!(),
+            },
+          )
+        }
+        ModuleType::CssAuto | ModuleType::CssModule => rspack_util::merge_from_optional_with(
+          p.get("css").cloned(),
+          options,
+          |css_options, options| match (css_options, options) {
+            (ParserOptions::Css(a), ParserOptions::CssAuto(b)) => {
+              ParserOptions::CssAuto(Into::<CssAutoParserOptions>::into(a).merge_from(b))
+            }
+            (ParserOptions::Css(a), ParserOptions::CssModule(b)) => {
+              ParserOptions::CssModule(Into::<CssModuleParserOptions>::into(a).merge_from(b))
+            }
+            _ => unreachable!(),
+          },
+        ),
+        _ => options.cloned(),
+      }
+    });
+    let global_generator = self.options.module.generator.as_ref().and_then(|g| {
+      let options = g.get(module_type.as_str());
+
+      match module_type {
+        ModuleType::AssetInline | ModuleType::AssetResource => {
+          rspack_util::merge_from_optional_with(
+            g.get("asset").cloned(),
+            options,
+            |asset_options, options| match (asset_options, options) {
+              (GeneratorOptions::Asset(a), GeneratorOptions::AssetInline(b)) => {
+                GeneratorOptions::AssetInline(
+                  Into::<AssetInlineGeneratorOptions>::into(a).merge_from(b),
+                )
+              }
+              (GeneratorOptions::Asset(a), GeneratorOptions::AssetResource(b)) => {
+                GeneratorOptions::AssetResource(
+                  Into::<AssetResourceGeneratorOptions>::into(a).merge_from(b),
+                )
+              }
+              _ => unreachable!(),
+            },
+          )
+        }
+        ModuleType::CssAuto | ModuleType::CssModule => rspack_util::merge_from_optional_with(
+          g.get("css").cloned(),
+          options,
+          |css_options, options| match (css_options, options) {
+            (GeneratorOptions::Css(a), GeneratorOptions::CssAuto(b)) => {
+              GeneratorOptions::CssAuto(Into::<CssAutoGeneratorOptions>::into(a).merge_from(b))
+            }
+            (GeneratorOptions::Css(a), GeneratorOptions::CssModule(b)) => {
+              GeneratorOptions::CssModule(Into::<CssModuleGeneratorOptions>::into(a).merge_from(b))
+            }
+            _ => unreachable!(),
+          },
+        ),
+        _ => options.cloned(),
+      }
+    });
     let parser = rspack_util::merge_from_optional_with(
       global_parser,
       parser.as_ref(),
-      |global, local| match (&global, local) {
-        (ParserOptions::Asset(_), ParserOptions::Asset(_))
-        | (ParserOptions::Css(_), ParserOptions::Css(_))
-        | (ParserOptions::CssAuto(_), ParserOptions::CssAuto(_))
-        | (ParserOptions::CssModule(_), ParserOptions::CssModule(_))
-        | (ParserOptions::Javascript(_), ParserOptions::Javascript(_)) => global.merge_from(local),
-        _ => global,
+      |global, local| match (global, local) {
+        (ParserOptions::Asset(a), ParserOptions::Asset(b)) => ParserOptions::Asset(a.merge_from(b)),
+        (ParserOptions::Css(a), ParserOptions::Css(b)) => ParserOptions::Css(a.merge_from(b)),
+        (ParserOptions::CssAuto(a), ParserOptions::CssAuto(b)) => {
+          ParserOptions::CssAuto(a.merge_from(b))
+        }
+        (ParserOptions::CssModule(a), ParserOptions::CssModule(b)) => {
+          ParserOptions::CssModule(a.merge_from(b))
+        }
+        (
+          ParserOptions::Javascript(a),
+          ParserOptions::JavascriptAuto(b)
+          | ParserOptions::JavascriptDynamic(b)
+          | ParserOptions::JavascriptEsm(b),
+        ) => ParserOptions::Javascript(a.merge_from(b)),
+        (ParserOptions::Json(a), ParserOptions::Json(b)) => ParserOptions::Json(a.merge_from(b)),
+        (global, _) => global,
       },
     );
     let generator = rspack_util::merge_from_optional_with(
@@ -817,6 +889,7 @@ impl NormalModuleFactory {
 /// `u32` is 4 bytes on 64bit machine, comparing to `usize` which is 8 bytes.
 /// ## Warning
 /// [ErrorSpan] start from zero, and `Span` of `swc` start from one. see https://swc-css.netlify.app/?code=eJzLzC3ILypRSFRIK8rPVVAvSS0u0csqVgcAZaoIKg
+#[cacheable]
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, Default, PartialOrd, Ord)]
 pub struct ErrorSpan {
   pub start: u32,

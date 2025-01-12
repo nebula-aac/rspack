@@ -1,22 +1,24 @@
+use rspack_cacheable::{cacheable, cacheable_dyn};
 use rspack_core::{
   AsContextDependency, CodeGenerationDataFilename, CodeGenerationDataUrl, Compilation, Dependency,
-  DependencyCategory, DependencyId, DependencyTemplate, DependencyType, ErrorSpan,
-  ModuleDependency, ModuleIdentifier, PublicPath, RealDependencyLocation, RuntimeSpec,
-  TemplateContext, TemplateReplaceSource,
+  DependencyCategory, DependencyId, DependencyRange, DependencyTemplate, DependencyType,
+  ModuleDependency, ModuleIdentifier, PublicPath, RuntimeSpec, TemplateContext,
+  TemplateReplaceSource,
 };
 
 use crate::utils::{css_escape_string, AUTO_PUBLIC_PATH_PLACEHOLDER};
 
+#[cacheable]
 #[derive(Debug, Clone)]
 pub struct CssUrlDependency {
   id: DependencyId,
   request: String,
-  range: RealDependencyLocation,
+  range: DependencyRange,
   replace_function: bool,
 }
 
 impl CssUrlDependency {
-  pub fn new(request: String, range: RealDependencyLocation, replace_function: bool) -> Self {
+  pub fn new(request: String, range: DependencyRange, replace_function: bool) -> Self {
     Self {
       request,
       range,
@@ -51,6 +53,7 @@ impl CssUrlDependency {
   }
 }
 
+#[cacheable_dyn]
 impl Dependency for CssUrlDependency {
   fn id(&self) -> &DependencyId {
     &self.id
@@ -64,8 +67,8 @@ impl Dependency for CssUrlDependency {
     &DependencyType::CssUrl
   }
 
-  fn span(&self) -> Option<ErrorSpan> {
-    Some(ErrorSpan::new(self.range.start, self.range.end))
+  fn range(&self) -> Option<&DependencyRange> {
+    Some(&self.range)
   }
 
   fn could_affect_referencing_module(&self) -> rspack_core::AffectType {
@@ -73,6 +76,7 @@ impl Dependency for CssUrlDependency {
   }
 }
 
+#[cacheable_dyn]
 impl ModuleDependency for CssUrlDependency {
   fn request(&self) -> &str {
     &self.request
@@ -87,6 +91,7 @@ impl ModuleDependency for CssUrlDependency {
   }
 }
 
+#[cacheable_dyn]
 impl DependencyTemplate for CssUrlDependency {
   fn apply(
     &self,

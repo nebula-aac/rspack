@@ -40,7 +40,7 @@ import { Stability } from '@components/ApiMeta.tsx';
 
 [html-webpack-plugin](https://github.com/jantimon/html-webpack-plugin) 在生成大量 HTML 文件时，性能表现不佳，Rspack 基于 Rust 实现的 [HtmlRspackPlugin](/plugins/rspack/html-rspack-plugin) 可以提供更好的性能。
 
-## Rspack Profile
+## Rspack profile
 
 Rspack CLI 支持使用 `RSPACK_PROFILE` 环境变量来进行构建性能分析。
 
@@ -58,7 +58,7 @@ $ RSPACK_PROFILE=ALL rspack build
 
 你可以通过使用 Rsdoctor 来查看 Loader 和 Plugin 的编译耗时及编译过程。
 
-#### Loader Timeline
+#### Loader timeline
 
 如果想要分析 Loader 和 Plugin 耗时或者 Loader 的编译行为，可以利用 Rsdoctor 来查看：
 
@@ -68,7 +68,7 @@ $ RSPACK_PROFILE=ALL rspack build
 
 参考 [Loader Timeline](https://rsdoctor.dev/guide/usage/loaders-timeline).
 
-#### Loader Details
+#### Loader details
 
 如果你想查看 Loader 对代码编译过程，那么可以利用 [Loader Details](https://rsdoctor.dev/guide/usage/loaders-analysis) 功能:
 
@@ -86,3 +86,11 @@ $ RSPACK_PROFILE=ALL rspack build
 - 使用文档：
   - Loader Analysis 使用文档可查看 [Loader Timeline](https://rsdoctor.dev/zh/guide/usage/loaders-timeline) 和 [Loader Details](https://rsdoctor.dev/zh/guide/usage/loaders-analysis)。
   - Plugins Analysis 使用文档可查看 [Plugin Analysis](https://rsdoctor.dev/zh/guide/usage/plugins-analysis)。
+
+#### FAQ
+
+**CssExtractRspackPlugin 的 loader 耗时过长问题**
+
+在使用 Rsdoctor 对 Rspack 项目进行编译耗时分析时，可能会发现 [CssExtractRspackPlugin](/plugins/rspack/css-extract-rspack-plugin) 的 loader 耗时较长，详情及原因请查看：
+
+[> CssExtractRspackPlugin 的 loader 耗时过长问题](https://rsdoctor.dev/zh/guide/more/faq#cssextractrspackplugin-%E7%9A%84-loader-%E8%80%97%E6%97%B6%E8%BF%87%E9%95%BF%E9%97%AE%E9%A2%98)

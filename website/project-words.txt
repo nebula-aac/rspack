@@ -2,6 +2,7 @@ aarch
 ahabhgk
 Akait
 alexander-akait
+alibaba
 analysable
 ansi
 antd
@@ -58,9 +59,11 @@ idents
 Idents
 iife
 Iife
+incrementality
 indicatif
 inituit
 innovatively
+inottn
 intlify
 IWANABETHATGUY
 jantimon
@@ -70,7 +73,10 @@ jkzing
 jscexperimentalplugins
 JSCPU
 jscpuprofile
+jserfeng
 kaffi
+kuaishou
+Kyrylo
 lightningcss
 lingyucoder
 linux
@@ -108,7 +114,9 @@ NestJS
 ngtools
 noimport
 nosources
+nuxt
 nwjs
+nyqykk
 Omereshone
 optimizationemitonerrors
 optionsrspackexperiments
@@ -149,6 +157,7 @@ Rust
 rustup
 sanyuan
 Shenzhen
+shulaoda
 sockjs
 sokra
 solidjs
@@ -161,9 +170,11 @@ swcjsminimizerplugin
 swcjsminimizerrspackplugin
 swcpack
 sxzz
+systemjs
 tailwind
 tailwindcss
 Terser
+tiktok
 tokio
 Towhk
 tuchg

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use derivative::Derivative;
+use derive_more::Debug;
 use futures::future::BoxFuture;
 use rspack_core::{
   ApplyContext, BoxDependency, Compilation, CompilationParams, CompilerCompilation, CompilerMake,
@@ -22,11 +22,10 @@ pub struct DynamicEntryPluginOptions {
 }
 
 #[plugin]
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Debug)]
 pub struct DynamicEntryPlugin {
   context: Context,
-  #[derivative(Debug = "ignore")]
+  #[debug(skip)]
   entry: EntryDynamic,
 }
 
@@ -66,11 +65,7 @@ async fn make(&self, compilation: &mut Compilation) -> Result<()> {
 
 #[async_trait]
 impl Plugin for DynamicEntryPlugin {
-  fn apply(
-    &self,
-    ctx: PluginContext<&mut ApplyContext>,
-    _options: &mut CompilerOptions,
-  ) -> Result<()> {
+  fn apply(&self, ctx: PluginContext<&mut ApplyContext>, _options: &CompilerOptions) -> Result<()> {
     ctx
       .context
       .compiler_hooks

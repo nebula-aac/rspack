@@ -1,8 +1,10 @@
 use dyn_clone::clone_trait_object;
+use rspack_cacheable::cacheable_dyn;
 
 use super::Dependency;
 use crate::{DependencyCondition, ErrorSpan};
 
+#[cacheable_dyn]
 pub trait ModuleDependency: Dependency {
   fn request(&self) -> &str;
 
@@ -15,7 +17,9 @@ pub trait ModuleDependency: Dependency {
   /// This is only intended used to display better diagnostics.
   /// So it might not be precise as it is using [crate::Dependency::span] as the default value.
   fn source_span(&self) -> Option<ErrorSpan> {
-    self.span()
+    self
+      .range()
+      .map(|range| ErrorSpan::new(range.start, range.end))
   }
 
   // TODO: move to ModuleGraphConnection
@@ -30,10 +34,6 @@ pub trait ModuleDependency: Dependency {
   }
 
   fn get_condition(&self) -> Option<DependencyCondition> {
-    None
-  }
-
-  fn is_export_all(&self) -> Option<bool> {
     None
   }
 }

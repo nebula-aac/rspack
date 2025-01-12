@@ -1,12 +1,11 @@
 mod compilation;
 mod hmr;
-mod make;
+pub mod make;
 mod module_executor;
-
 use std::sync::Arc;
 
 use rspack_error::Result;
-use rspack_fs::AsyncWritableFileSystem;
+use rspack_fs::{IntermediateFileSystem, NativeFileSystem, ReadableFileSystem, WritableFileSystem};
 use rspack_futures::FuturesResults;
 use rspack_hook::define_hook;
 use rspack_paths::{Utf8Path, Utf8PathBuf};
@@ -17,10 +16,12 @@ use tracing::instrument;
 pub use self::compilation::*;
 pub use self::hmr::{collect_changed_modules, CompilationRecords};
 pub use self::module_executor::{ExecuteModuleId, ExecutedRuntimeModule, ModuleExecutor};
+use crate::cache::{new_cache, Cache};
+use crate::incremental::IncrementalPasses;
 use crate::old_cache::Cache as OldCache;
-use crate::unaffected_cache::UnaffectedModulesCache;
 use crate::{
-  fast_set, BoxPlugin, CompilerOptions, Logger, PluginDriver, ResolverFactory, SharedPluginDriver,
+  fast_set, include_hash, trim_dir, BoxPlugin, CleanOptions, CompilerOptions, Logger, PluginDriver,
+  ResolverFactory, SharedPluginDriver,
 };
 use crate::{ContextModuleFactory, NormalModuleFactory};
 
@@ -50,32 +51,36 @@ pub struct CompilerHooks {
 }
 
 #[derive(Debug)]
-pub struct Compiler<T>
-where
-  T: AsyncWritableFileSystem + Send + Sync,
-{
+pub struct Compiler {
+  pub compiler_path: String,
   pub options: Arc<CompilerOptions>,
-  pub output_filesystem: T,
+  pub output_filesystem: Arc<dyn WritableFileSystem>,
+  pub intermediate_filesystem: Arc<dyn IntermediateFileSystem>,
+  pub input_filesystem: Arc<dyn ReadableFileSystem>,
   pub compilation: Compilation,
   pub plugin_driver: SharedPluginDriver,
+  pub buildtime_plugin_driver: SharedPluginDriver,
   pub resolver_factory: Arc<ResolverFactory>,
   pub loader_resolver_factory: Arc<ResolverFactory>,
+  pub cache: Arc<dyn Cache>,
   pub old_cache: Arc<OldCache>,
   /// emitted asset versions
   /// the key of HashMap is filename, the value of HashMap is version
   pub emitted_asset_versions: HashMap<String, String>,
-  unaffected_modules_cache: Arc<UnaffectedModulesCache>,
 }
 
-impl<T> Compiler<T>
-where
-  T: AsyncWritableFileSystem + Send + Sync,
-{
+impl Compiler {
   #[instrument(skip_all)]
+  #[allow(clippy::too_many_arguments)]
   pub fn new(
+    compiler_path: String,
     options: CompilerOptions,
     plugins: Vec<BoxPlugin>,
-    output_filesystem: T,
+    buildtime_plugins: Vec<BoxPlugin>,
+    output_filesystem: Option<Arc<dyn WritableFileSystem>>,
+    intermediate_filesystem: Option<Arc<dyn IntermediateFileSystem>>,
+    // only supports passing input_filesystem in rust api, no support for js api
+    input_filesystem: Option<Arc<dyn ReadableFileSystem + Send + Sync>>,
     // no need to pass resolve_factory in rust api
     resolver_factory: Option<Arc<ResolverFactory>>,
     loader_resolver_factory: Option<Arc<ResolverFactory>>,
@@ -86,35 +91,70 @@ where
         debug_info.with_context(options.context.to_string());
       }
     }
-    let resolver_factory =
-      resolver_factory.unwrap_or_else(|| Arc::new(ResolverFactory::new(options.resolve.clone())));
-    let loader_resolver_factory = loader_resolver_factory
-      .unwrap_or_else(|| Arc::new(ResolverFactory::new(options.resolve_loader.clone())));
-    let (plugin_driver, options) = PluginDriver::new(options, plugins, resolver_factory.clone());
+    let pnp = options.resolve.pnp.unwrap_or(false);
+    // pnp is only meaningful for input_filesystem, so disable it for intermediate_filesystem and output_filesystem
+    let input_filesystem = input_filesystem.unwrap_or_else(|| Arc::new(NativeFileSystem::new(pnp)));
+
+    let output_filesystem =
+      output_filesystem.unwrap_or_else(|| Arc::new(NativeFileSystem::new(false)));
+    let intermediate_filesystem =
+      intermediate_filesystem.unwrap_or_else(|| Arc::new(NativeFileSystem::new(false)));
+
+    let resolver_factory = resolver_factory.unwrap_or_else(|| {
+      Arc::new(ResolverFactory::new(
+        options.resolve.clone(),
+        input_filesystem.clone(),
+      ))
+    });
+    let loader_resolver_factory = loader_resolver_factory.unwrap_or_else(|| {
+      Arc::new(ResolverFactory::new(
+        options.resolve_loader.clone(),
+        input_filesystem.clone(),
+      ))
+    });
+
+    let options = Arc::new(options);
+    let plugin_driver = PluginDriver::new(options.clone(), plugins, resolver_factory.clone());
+    let buildtime_plugin_driver =
+      PluginDriver::new(options.clone(), buildtime_plugins, resolver_factory.clone());
+    let cache = new_cache(
+      &compiler_path,
+      options.clone(),
+      input_filesystem.clone(),
+      intermediate_filesystem.clone(),
+    );
     let old_cache = Arc::new(OldCache::new(options.clone()));
-    let unaffected_modules_cache = Arc::new(UnaffectedModulesCache::default());
     let module_executor = ModuleExecutor::default();
+
     Self {
+      compiler_path,
       options: options.clone(),
       compilation: Compilation::new(
         options,
         plugin_driver.clone(),
+        buildtime_plugin_driver.clone(),
         resolver_factory.clone(),
         loader_resolver_factory.clone(),
         None,
+        cache.clone(),
         old_cache.clone(),
-        unaffected_modules_cache.clone(),
         Some(module_executor),
         Default::default(),
         Default::default(),
+        input_filesystem.clone(),
+        intermediate_filesystem.clone(),
+        output_filesystem.clone(),
       ),
       output_filesystem,
+      intermediate_filesystem,
       plugin_driver,
+      buildtime_plugin_driver,
       resolver_factory,
       loader_resolver_factory,
+      cache,
       old_cache,
       emitted_asset_versions: Default::default(),
-      unaffected_modules_cache,
+      input_filesystem,
     }
   }
 
@@ -123,37 +163,46 @@ where
     Ok(())
   }
 
-  #[instrument(name = "build", skip_all)]
+  #[instrument("Compiler:build", skip_all)]
   pub async fn build(&mut self) -> Result<()> {
     self.old_cache.end_idle();
     // TODO: clear the outdated cache entries in resolver,
     // TODO: maybe it's better to use external entries.
-    self.plugin_driver.resolver_factory.clear_cache();
+    self.plugin_driver.clear_cache();
 
-    let module_executor = ModuleExecutor::default();
     fast_set(
       &mut self.compilation,
       Compilation::new(
         self.options.clone(),
         self.plugin_driver.clone(),
+        self.buildtime_plugin_driver.clone(),
         self.resolver_factory.clone(),
         self.loader_resolver_factory.clone(),
         None,
+        self.cache.clone(),
         self.old_cache.clone(),
-        self.unaffected_modules_cache.clone(),
-        Some(module_executor),
+        Some(Default::default()),
         Default::default(),
         Default::default(),
+        self.input_filesystem.clone(),
+        self.intermediate_filesystem.clone(),
+        self.output_filesystem.clone(),
       ),
     );
+    if let Err(err) = self.cache.before_compile(&mut self.compilation).await {
+      self.compilation.push_diagnostic(err.into());
+    }
 
     self.compile().await?;
     self.old_cache.begin_idle();
     self.compile_done().await?;
+    if let Err(err) = self.cache.after_compile(&self.compilation).await {
+      self.compilation.push_diagnostic(err.into());
+    }
     Ok(())
   }
 
-  #[instrument(name = "compile", skip_all)]
+  #[instrument("Compiler:compile", skip_all)]
   async fn compile(&mut self) -> Result<()> {
     let mut compilation_params = self.new_compilation_params();
     // FOR BINDING SAFETY:
@@ -177,6 +226,13 @@ where
     let logger = self.compilation.get_logger("rspack.Compiler");
     let make_start = logger.time("make");
     let make_hook_start = logger.time("make hook");
+    if let Err(err) = self
+      .cache
+      .before_make(&mut self.compilation.make_artifact)
+      .await
+    {
+      self.compilation.push_diagnostic(err.into());
+    }
     if let Some(e) = self
       .plugin_driver
       .compiler_hooks
@@ -185,7 +241,7 @@ where
       .await
       .err()
     {
-      self.compilation.extend_diagnostics(vec![e.into()]);
+      self.compilation.push_diagnostic(e.into());
     }
     logger.time_end(make_hook_start);
     self.compilation.make().await?;
@@ -202,6 +258,9 @@ where
 
     let start = logger.time("finish compilation");
     self.compilation.finish(self.plugin_driver.clone()).await?;
+    if let Err(err) = self.cache.after_make(&self.compilation.make_artifact).await {
+      self.compilation.push_diagnostic(err.into());
+    }
     logger.time_end(start);
     let start = logger.time("seal compilation");
     self.compilation.seal(self.plugin_driver.clone()).await?;
@@ -216,7 +275,7 @@ where
     Ok(())
   }
 
-  #[instrument(name = "compile_done", skip_all)]
+  #[instrument("Compile:done", skip_all)]
   async fn compile_done(&mut self) -> Result<()> {
     let logger = self.compilation.get_logger("rspack.Compiler");
 
@@ -239,34 +298,9 @@ where
     Ok(())
   }
 
-  #[instrument(name = "emit_assets", skip_all)]
+  #[instrument("emit_assets", skip_all)]
   pub async fn emit_assets(&mut self) -> Result<()> {
-    if self.options.output.clean {
-      if self.emitted_asset_versions.is_empty() {
-        self
-          .output_filesystem
-          .remove_dir_all(&self.options.output.path)
-          .await?;
-      } else {
-        // clean unused file
-        let assets = self.compilation.assets();
-        let _ = self
-          .emitted_asset_versions
-          .iter()
-          .filter_map(|(filename, _version)| {
-            if !assets.contains_key(filename) {
-              let filename = filename.to_owned();
-              Some(async {
-                let filename = Utf8Path::new(&self.options.output.path).join(filename);
-                let _ = self.output_filesystem.remove_file(&filename).await;
-              })
-            } else {
-              None
-            }
-          })
-          .collect::<FuturesResults<_>>();
-      }
-    }
+    self.run_clean_options().await?;
 
     self
       .plugin_driver
@@ -282,7 +316,12 @@ where
       .iter()
       .filter_map(|(filename, asset)| {
         // collect version info to new_emitted_asset_versions
-        if self.options.is_incremental_rebuild_emit_asset_enabled() {
+        if self
+          .options
+          .experiments
+          .incremental
+          .contains(IncrementalPasses::EMIT_ASSETS)
+        {
           new_emitted_asset_versions.insert(filename.to_string(), asset.info.version.clone());
         }
 
@@ -318,10 +357,8 @@ where
     asset: &CompilationAsset,
   ) -> Result<()> {
     if let Some(source) = asset.get_source() {
-      let filename = filename
-        .split_once('?')
-        .map_or(filename, |(filename, _query)| filename);
-      let file_path = output_path.join(filename);
+      let (target_file, query) = filename.split_once('?').unwrap_or((filename, ""));
+      let file_path = output_path.join(target_file);
       self
         .output_filesystem
         .create_dir_all(
@@ -331,12 +368,54 @@ where
         )
         .await?;
 
-      self
-        .output_filesystem
-        .write(&file_path, source.buffer().as_ref())
-        .await?;
+      let content = source.buffer();
 
-      self.compilation.emitted_assets.insert(filename.to_string());
+      let mut immutable = asset.info.immutable.unwrap_or(false);
+      if !query.is_empty() {
+        immutable = immutable
+          && (include_hash(target_file, &asset.info.content_hash)
+            || include_hash(target_file, &asset.info.chunk_hash)
+            || include_hash(target_file, &asset.info.full_hash));
+      }
+
+      let stat = match self
+        .output_filesystem
+        .stat(file_path.as_path().as_ref())
+        .await
+      {
+        Ok(stat) => Some(stat),
+        Err(_) => None,
+      };
+
+      let need_write = if !self.options.output.compare_before_emit {
+        // write when compare_before_emit is false
+        true
+      } else if !stat.as_ref().is_some_and(|stat| stat.is_file) {
+        // write when not exists or not a file
+        true
+      } else if immutable {
+        // do not write when asset is immutable and the file exists
+        false
+      } else if (content.len() as u64) == stat.as_ref().unwrap_or_else(|| unreachable!()).size {
+        match self
+          .output_filesystem
+          .read_file(file_path.as_path().as_ref())
+          .await
+        {
+          // write when content is different
+          Ok(c) => content != c,
+          // write when file can not be read
+          Err(_) => true,
+        }
+      } else {
+        // write if content length is different
+        true
+      };
+
+      if need_write {
+        self.output_filesystem.write(&file_path, &content).await?;
+        self.compilation.emitted_assets.insert(filename.to_string());
+      }
 
       let info = AssetEmittedInfo {
         output_path: output_path.to_owned(),
@@ -350,6 +429,58 @@ where
         .call(&self.compilation, filename, &info)
         .await?;
     }
+    Ok(())
+  }
+
+  async fn run_clean_options(&mut self) -> Result<()> {
+    let clean_options = &self.options.output.clean;
+
+    // keep all
+    if let CleanOptions::CleanAll(false) = clean_options {
+      return Ok(());
+    }
+
+    if self.emitted_asset_versions.is_empty() {
+      if let CleanOptions::KeepPath(p) = clean_options {
+        let path_to_keep = self.options.output.path.join(Utf8Path::new(p));
+        trim_dir(
+          &*self.output_filesystem,
+          &self.options.output.path,
+          &path_to_keep,
+        )
+        .await?;
+        return Ok(());
+      }
+
+      // CleanOptions::CleanAll(true) only
+      debug_assert!(matches!(clean_options, CleanOptions::CleanAll(true)));
+
+      self
+        .output_filesystem
+        .remove_dir_all(&self.options.output.path)
+        .await?;
+      return Ok(());
+    }
+
+    let assets = self.compilation.assets();
+    let _ = self
+      .emitted_asset_versions
+      .iter()
+      .filter_map(|(filename, _version)| {
+        if !assets.contains_key(filename) {
+          let filename = filename.to_owned();
+          Some(async {
+            if !clean_options.keep(filename.as_str()) {
+              let filename = Utf8Path::new(&self.options.output.path).join(filename);
+              let _ = self.output_filesystem.remove_file(&filename).await;
+            }
+          })
+        } else {
+          None
+        }
+      })
+      .collect::<FuturesResults<_>>();
+
     Ok(())
   }
 

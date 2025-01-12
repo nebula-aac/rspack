@@ -1,24 +1,26 @@
+use rspack_cacheable::{cacheable, cacheable_dyn};
 use rspack_core::{
-  module_raw, AsModuleDependency, Compilation, ContextDependency, RealDependencyLocation,
-  RuntimeSpec,
+  module_raw, AsModuleDependency, Compilation, ContextDependency, ContextOptions, Dependency,
+  DependencyCategory, DependencyId, DependencyRange, DependencyTemplate, DependencyType,
+  ModuleGraph, RuntimeSpec, TemplateContext, TemplateReplaceSource,
 };
-use rspack_core::{ContextOptions, Dependency, DependencyCategory, DependencyId};
-use rspack_core::{DependencyTemplate, DependencyType, ErrorSpan};
-use rspack_core::{TemplateContext, TemplateReplaceSource};
+use rspack_error::Diagnostic;
 
 use super::create_resource_identifier_for_context_dependency;
 
+#[cacheable]
 #[derive(Debug, Clone)]
 pub struct RequireContextDependency {
   id: DependencyId,
   options: ContextOptions,
-  range: RealDependencyLocation,
+  range: DependencyRange,
   resource_identifier: String,
   optional: bool,
+  critical: Option<Diagnostic>,
 }
 
 impl RequireContextDependency {
-  pub fn new(options: ContextOptions, range: RealDependencyLocation, optional: bool) -> Self {
+  pub fn new(options: ContextOptions, range: DependencyRange, optional: bool) -> Self {
     let resource_identifier = create_resource_identifier_for_context_dependency(None, &options);
     Self {
       options,
@@ -26,10 +28,12 @@ impl RequireContextDependency {
       id: DependencyId::new(),
       resource_identifier,
       optional,
+      critical: None,
     }
   }
 }
 
+#[cacheable_dyn]
 impl Dependency for RequireContextDependency {
   fn id(&self) -> &DependencyId {
     &self.id
@@ -43,12 +47,19 @@ impl Dependency for RequireContextDependency {
     &DependencyType::RequireContext
   }
 
-  fn span(&self) -> Option<ErrorSpan> {
-    Some(ErrorSpan::new(self.range.start, self.range.end))
+  fn range(&self) -> Option<&DependencyRange> {
+    Some(&self.range)
   }
 
   fn could_affect_referencing_module(&self) -> rspack_core::AffectType {
     rspack_core::AffectType::True
+  }
+
+  fn get_diagnostics(&self, _module_graph: &ModuleGraph) -> Option<Vec<Diagnostic>> {
+    if let Some(critical) = self.critical() {
+      return Some(vec![critical.clone()]);
+    }
+    None
   }
 }
 
@@ -80,8 +91,17 @@ impl ContextDependency for RequireContextDependency {
   fn type_prefix(&self) -> rspack_core::ContextTypePrefix {
     rspack_core::ContextTypePrefix::Normal
   }
+
+  fn critical(&self) -> &Option<Diagnostic> {
+    &self.critical
+  }
+
+  fn critical_mut(&mut self) -> &mut Option<Diagnostic> {
+    &mut self.critical
+  }
 }
 
+#[cacheable_dyn]
 impl DependencyTemplate for RequireContextDependency {
   fn apply(
     &self,

@@ -8,11 +8,12 @@ use rspack_error::{
   miette::{diagnostic, Diagnostic},
   DiagnosticExt, Severity, TraceableError,
 };
+use rspack_fs::ReadableFileSystem;
 use rspack_loader_runner::DescriptionData;
 use rspack_paths::AssertUtf8;
 use rustc_hash::FxHashSet as HashSet;
 
-use super::{ResolveResult, Resource};
+use super::{boxfs::BoxFS, ResolveResult, Resource};
 use crate::{AliasMap, DependencyCategory, Resolve, ResolveArgs, ResolveOptionsWithDependencyType};
 
 #[derive(Debug, Default, Clone)]
@@ -34,17 +35,17 @@ pub enum ResolveInnerOptions<'a> {
   RspackResolver(&'a rspack_resolver::ResolveOptions),
 }
 
-impl<'a> fmt::Debug for ResolveInnerOptions<'a> {
+impl fmt::Debug for ResolveInnerOptions<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Self::RspackResolver(options) => {
-        write!(f, "{:?}", options)
+        write!(f, "{options:?}")
       }
     }
   }
 }
 
-impl<'a> ResolveInnerOptions<'a> {
+impl ResolveInnerOptions<'_> {
   pub fn is_enforce_extension_enabled(&self) -> bool {
     match self {
       Self::RspackResolver(options) => matches!(
@@ -78,17 +79,18 @@ impl<'a> ResolveInnerOptions<'a> {
 /// Internal caches are shared.
 #[derive(Debug)]
 pub struct Resolver {
-  resolver: rspack_resolver::Resolver,
+  resolver: rspack_resolver::ResolverGeneric<BoxFS>,
 }
 
 impl Resolver {
-  pub fn new(options: Resolve) -> Self {
-    Self::new_rspack_resolver(options)
+  pub fn new(options: Resolve, fs: Arc<dyn ReadableFileSystem>) -> Self {
+    Self::new_rspack_resolver(options, fs)
   }
 
-  fn new_rspack_resolver(options: Resolve) -> Self {
+  fn new_rspack_resolver(options: Resolve, fs: Arc<dyn ReadableFileSystem>) -> Self {
     let options = to_rspack_resolver_options(options, false, DependencyCategory::Unknown);
-    let resolver = rspack_resolver::Resolver::new(options);
+    let boxfs = BoxFS::new(fs);
+    let resolver = rspack_resolver::ResolverGeneric::new_with_file_system(boxfs, options);
     Self { resolver }
   }
 
@@ -109,6 +111,7 @@ impl Resolver {
       options_with_dependency_type.resolve_to_context,
       options_with_dependency_type.dependency_category,
     );
+
     let resolver = resolver.clone_with_options(options);
     Self { resolver }
   }
@@ -283,7 +286,7 @@ fn to_rspack_resolver_options(
     roots,
     builtin_modules: false,
     imports_fields,
-    pnp_manifest: None,
+    enable_pnp: options.pnp.unwrap_or(false),
   }
 }
 

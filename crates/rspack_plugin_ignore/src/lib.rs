@@ -1,6 +1,4 @@
-use std::fmt::Debug;
-
-use derivative::Derivative;
+use derive_more::Debug;
 use futures::future::BoxFuture;
 use rspack_core::{
   ApplyContext, BeforeResolveResult, CompilerOptions, ContextModuleFactoryBeforeResolve,
@@ -17,12 +15,11 @@ pub enum CheckResourceContent {
   Fn(CheckResourceFn),
 }
 
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Debug)]
 pub struct IgnorePluginOptions {
   pub resource_reg_exp: Option<RspackRegex>,
   pub context_reg_exp: Option<RspackRegex>,
-  #[derivative(Debug = "ignore")]
+  #[debug(skip)]
   pub check_resource: Option<CheckResourceContent>,
 }
 
@@ -79,7 +76,7 @@ async fn cmf_before_resolve(&self, data: BeforeResolveResult) -> Result<BeforeRe
   match data {
     BeforeResolveResult::Ignored => Ok(BeforeResolveResult::Ignored),
     BeforeResolveResult::Data(d) => {
-      if let Some(false) = self.check_ignore(d.request.as_deref(), &d.context).await {
+      if let Some(false) = self.check_ignore(Some(&d.request), &d.context).await {
         Ok(BeforeResolveResult::Ignored)
       } else {
         Ok(BeforeResolveResult::Data(d))
@@ -93,11 +90,7 @@ impl Plugin for IgnorePlugin {
     "IgnorePlugin"
   }
 
-  fn apply(
-    &self,
-    ctx: PluginContext<&mut ApplyContext>,
-    _options: &mut CompilerOptions,
-  ) -> Result<()> {
+  fn apply(&self, ctx: PluginContext<&mut ApplyContext>, _options: &CompilerOptions) -> Result<()> {
     ctx
       .context
       .normal_module_factory_hooks

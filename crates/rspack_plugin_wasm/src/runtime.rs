@@ -1,5 +1,6 @@
+use cow_utils::CowUtils;
 use rspack_collections::Identifier;
-use rspack_core::rspack_sources::{BoxSource, RawSource, SourceExt};
+use rspack_core::rspack_sources::{BoxSource, RawStringSource, SourceExt};
 use rspack_core::{
   get_filename_without_hash_length, impl_runtime_module, ChunkUkey, Compilation, PathData,
   RuntimeModule, RuntimeModuleStage,
@@ -56,15 +57,15 @@ impl RuntimeModule for AsyncWasmLoadingRuntimeModule {
           .hash(&hash)
           .content_hash(&hash)
           .id("\" + wasmModuleId + \"")
-          .runtime(&chunk.runtime),
+          .runtime(chunk.runtime().as_str()),
       )
       .always_ok();
     Ok(
-      RawSource::from(get_async_wasm_loading(
+      RawStringSource::from(get_async_wasm_loading(
         &self
           .generate_load_binary_code
-          .replace("$PATH", &format!("\"{}\"", path))
-          .replace(
+          .cow_replace("$PATH", &format!("\"{}\"", path))
+          .cow_replace(
             "$IMPORT_META_NAME",
             compilation.options.output.import_meta_name.as_str(),
           ),

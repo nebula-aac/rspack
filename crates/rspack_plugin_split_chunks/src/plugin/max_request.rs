@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use rspack_collections::UkeySet;
+use rspack_collections::{DatabaseItem, UkeySet};
 use rspack_core::{ChunkUkey, Compilation};
 
 use crate::{CacheGroup, SplitChunksPlugin};
@@ -8,7 +8,7 @@ use crate::{CacheGroup, SplitChunksPlugin};
 impl SplitChunksPlugin {
   /// Affected by `splitChunks.maxInitialRequests`/`splitChunks.cacheGroups.{cacheGroup}.maxInitialRequests`
   /// Affected by `splitChunks.maxAsyncRequests`/`splitChunks.cacheGroups.{cacheGroup}.maxAsyncRequests`
-  #[tracing::instrument(skip_all)]
+  // #[tracing::instrument(skip_all)]
   pub(crate) fn ensure_max_request_fit(
     &self,
     compilation: &Compilation,
@@ -46,7 +46,7 @@ impl SplitChunksPlugin {
         // chunk.
 
         let actually_requests = chunk
-          .groups
+          .groups()
           .iter()
           .map(|g| chunk_group_db.expect_get(g))
           .map(|group| group.chunks.len())
@@ -55,7 +55,7 @@ impl SplitChunksPlugin {
           .unwrap_or_default();
 
         if actually_requests as f64 >= allowed_max_request {
-          Some(chunk.ukey)
+          Some(chunk.ukey())
         } else {
           None
         }

@@ -1,7 +1,8 @@
-use rspack_collections::Identifier;
+use cow_utils::CowUtils;
+use rspack_collections::{DatabaseItem, Identifier};
 use rspack_core::{
   compile_boolean_matcher, impl_runtime_module,
-  rspack_sources::{BoxSource, ConcatSource, RawSource, SourceExt},
+  rspack_sources::{BoxSource, ConcatSource, RawStringSource, SourceExt},
   BooleanMatcher, Chunk, ChunkUkey, Compilation, RuntimeGlobals, RuntimeModule, RuntimeModuleStage,
 };
 
@@ -55,7 +56,7 @@ impl ReadFileChunkLoadingRuntimeModule {
           }
         )
       });
-    RawSource::from(format!("{} = {};\n", RuntimeGlobals::BASE_URI, base_uri)).boxed()
+    RawStringSource::from(format!("{} = {};\n", RuntimeGlobals::BASE_URI, base_uri)).boxed()
   }
 }
 
@@ -67,7 +68,7 @@ impl RuntimeModule for ReadFileChunkLoadingRuntimeModule {
     let chunk = compilation
       .chunk_by_ukey
       .expect_get(&self.chunk.expect("The chunk should be attached."));
-    let runtime_requirements = get_chunk_runtime_requirements(compilation, &chunk.ukey);
+    let runtime_requirements = get_chunk_runtime_requirements(compilation, &chunk.ukey());
 
     let with_base_uri = runtime_requirements.contains(RuntimeGlobals::BASE_URI);
     let with_hmr = runtime_requirements.contains(RuntimeGlobals::HMR_DOWNLOAD_UPDATE_HANDLERS);
@@ -80,7 +81,7 @@ impl RuntimeModule for ReadFileChunkLoadingRuntimeModule {
     let condition_map =
       compilation
         .chunk_graph
-        .get_chunk_condition_map(&chunk.ukey, compilation, chunk_has_js);
+        .get_chunk_condition_map(&chunk.ukey(), compilation, chunk_has_js);
     let has_js_matcher = compile_boolean_matcher(&condition_map);
 
     let initial_chunks = get_initial_chunk_ids(self.chunk, compilation, chunk_has_js);
@@ -93,34 +94,36 @@ impl RuntimeModule for ReadFileChunkLoadingRuntimeModule {
 
     if with_hmr {
       let state_expression = format!("{}_readFileVm", RuntimeGlobals::HMR_RUNTIME_STATE_PREFIX);
-      source.add(RawSource::from(format!(
+      source.add(RawStringSource::from(format!(
         "var installedChunks = {} = {} || {};\n",
         state_expression,
         state_expression,
         &stringify_chunks(&initial_chunks, 0)
       )));
     } else {
-      source.add(RawSource::from(format!(
+      source.add(RawStringSource::from(format!(
         "var installedChunks = {};\n",
         &stringify_chunks(&initial_chunks, 0)
       )));
     }
 
     if with_on_chunk_load {
-      source.add(RawSource::from(include_str!(
+      source.add(RawStringSource::from_static(include_str!(
         "runtime/readfile_chunk_loading_with_on_chunk_load.js"
       )));
     }
 
     if with_loading || with_external_install_chunk {
-      source.add(RawSource::from(
-        include_str!("runtime/readfile_chunk_loading.js").replace(
-          "$WITH_ON_CHUNK_LOADED$",
-          match with_on_chunk_load {
-            true => "__webpack_require__.O();",
-            false => "",
-          },
-        ),
+      source.add(RawStringSource::from(
+        include_str!("runtime/readfile_chunk_loading.js")
+          .cow_replace(
+            "$WITH_ON_CHUNK_LOADED$",
+            match with_on_chunk_load {
+              true => "__webpack_require__.O();",
+              false => "",
+            },
+          )
+          .into_owned(),
       ));
     }
 
@@ -129,9 +132,9 @@ impl RuntimeModule for ReadFileChunkLoadingRuntimeModule {
         "installedChunks[chunkId] = 0;".to_string()
       } else {
         include_str!("runtime/readfile_chunk_loading_with_loading.js")
-          .replace("$JS_MATCHER$", &has_js_matcher.render("chunkId"))
-          .replace("$OUTPUT_DIR$", &root_output_dir)
-          .replace(
+          .cow_replace("$JS_MATCHER$", &has_js_matcher.render("chunkId"))
+          .cow_replace("$OUTPUT_DIR$", &root_output_dir)
+          .cow_replace(
             "$MATCH_FALLBACK$",
             if matches!(has_js_matcher, BooleanMatcher::Condition(true)) {
               ""
@@ -139,9 +142,10 @@ impl RuntimeModule for ReadFileChunkLoadingRuntimeModule {
               "else installedChunks[chunkId] = 0;\n"
             },
           )
+          .into_owned()
       };
 
-      source.add(RawSource::from(format!(
+      source.add(RawStringSource::from(format!(
         r#"
         // ReadFile + VM.run chunk loading for javascript"
         __webpack_require__.f.readFileVm = function (chunkId, promises) {{
@@ -152,24 +156,25 @@ impl RuntimeModule for ReadFileChunkLoadingRuntimeModule {
     }
 
     if with_external_install_chunk {
-      source.add(RawSource::from(include_str!(
+      source.add(RawStringSource::from_static(include_str!(
         "runtime/readfile_chunk_loading_with_external_install_chunk.js"
       )));
     }
 
     if with_hmr {
-      source.add(RawSource::from(include_str!(
+      source.add(RawStringSource::from_static(include_str!(
         "runtime/readfile_chunk_loading_with_hmr.js"
       )));
-      source.add(RawSource::from(generate_javascript_hmr_runtime(
+      source.add(RawStringSource::from(generate_javascript_hmr_runtime(
         "readFileVm",
       )));
     }
 
     if with_hmr_manifest {
-      source.add(RawSource::from(
+      source.add(RawStringSource::from(
         include_str!("runtime/readfile_chunk_loading_with_hmr_manifest.js")
-          .replace("$OUTPUT_DIR$", &root_output_dir),
+          .cow_replace("$OUTPUT_DIR$", &root_output_dir)
+          .into_owned(),
       ));
     }
 

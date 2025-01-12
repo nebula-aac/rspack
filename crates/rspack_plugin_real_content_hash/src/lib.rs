@@ -6,12 +6,12 @@ use std::{
   sync::LazyLock,
 };
 
-use derivative::Derivative;
+use derive_more::Debug;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use regex::{Captures, Regex};
 use rspack_core::{
-  rspack_sources::{BoxSource, RawSource, SourceExt},
+  rspack_sources::{BoxSource, RawStringSource, SourceExt},
   AssetInfo, Compilation, CompilationProcessAssets, Logger, Plugin, PluginContext,
 };
 use rspack_error::Result;
@@ -41,7 +41,7 @@ impl Plugin for RealContentHashPlugin {
   fn apply(
     &self,
     ctx: PluginContext<&mut rspack_core::ApplyContext>,
-    _options: &mut rspack_core::CompilerOptions,
+    _options: &rspack_core::CompilerOptions,
   ) -> Result<()> {
     ctx
       .context
@@ -109,7 +109,7 @@ fn inner_impl(compilation: &mut Compilation) -> Result<()> {
   for old_hash in &ordered_hashes {
     if let Some(asset_names) = hash_to_asset_names.get_mut(old_hash.as_str()) {
       asset_names.sort();
-      let asset_contents: Vec<_> = asset_names
+      let mut asset_contents: Vec<_> = asset_names
         .par_iter()
         .filter_map(|name| assets_data.get(name))
         .map(|data| {
@@ -120,6 +120,7 @@ fn inner_impl(compilation: &mut Compilation) -> Result<()> {
           )
         })
         .collect();
+      asset_contents.dedup();
       let mut hasher = RspackHash::from(&compilation.options.output);
       for asset_content in asset_contents {
         hasher.write(&asset_content.buffer());
@@ -177,18 +178,17 @@ fn inner_impl(compilation: &mut Compilation) -> Result<()> {
   Ok(())
 }
 
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Debug)]
 struct AssetData {
   own_hashes: HashSet<String>,
   referenced_hashes: HashSet<String>,
-  #[derivative(Debug = "ignore")]
+  #[debug(skip)]
   old_source: BoxSource,
-  #[derivative(Debug = "ignore")]
+  #[debug(skip)]
   content: AssetDataContent,
-  #[derivative(Debug = "ignore")]
+  #[debug(skip)]
   new_source: OnceCell<BoxSource>,
-  #[derivative(Debug = "ignore")]
+  #[debug(skip)]
   new_source_without_own: OnceCell<BoxSource>,
 }
 
@@ -257,7 +257,7 @@ impl AssetData {
             .get(hash)
             .expect("RealContentHashPlugin: should have new hash")
         });
-        return RawSource::from(new_content.into_owned()).boxed();
+        return RawStringSource::from(new_content.into_owned()).boxed();
       }
       self.old_source.clone()
     })

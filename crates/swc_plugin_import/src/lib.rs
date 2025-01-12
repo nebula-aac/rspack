@@ -5,6 +5,7 @@ mod visit;
 
 use std::fmt::Debug;
 
+use cow_utils::CowUtils;
 use handlebars::{Context, Helper, HelperResult, Output, RenderContext, Template};
 use heck::{ToKebabCase, ToLowerCamelCase, ToSnakeCase};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
@@ -17,7 +18,7 @@ use swc_core::{
       ImportSpecifier, Module, ModuleDecl, ModuleExportName, ModuleItem, Str,
     },
     atoms::Atom,
-    visit::{as_folder, Fold, VisitMut, VisitWith},
+    visit::{visit_mut_pass, VisitMut, VisitWith},
   },
 };
 
@@ -150,7 +151,9 @@ const CUSTOM_STYLE_NAME: &str = "CUSTOM_STYLE_NAME";
 /// Panic:
 ///
 /// Panics in sometimes if [swc_core::common::errors::HANDLER] is not provided.
-pub fn plugin_import(config: &Vec<ImportOptions>) -> impl Fold + '_ {
+pub fn plugin_import(
+  config: &Vec<ImportOptions>,
+) -> swc_core::ecma::visit::VisitMutPass<ImportPlugin<'_>> {
   let mut renderer = handlebars::Handlebars::new();
 
   renderer.register_helper(
@@ -261,7 +264,7 @@ pub fn plugin_import(config: &Vec<ImportOptions>) -> impl Fold + '_ {
           .param(0)
           .and_then(|v| v.value().as_str())
           .unwrap_or("");
-        out.write(param.to_uppercase().as_ref())?;
+        out.write(param.cow_to_uppercase().as_ref())?;
         Ok(())
       },
     ),
@@ -280,7 +283,7 @@ pub fn plugin_import(config: &Vec<ImportOptions>) -> impl Fold + '_ {
           .param(0)
           .and_then(|v| v.value().as_str())
           .unwrap_or("");
-        out.write(param.to_lowercase().as_ref())?;
+        out.write(param.cow_to_lowercase().as_ref())?;
         Ok(())
       },
     ),
@@ -309,7 +312,7 @@ pub fn plugin_import(config: &Vec<ImportOptions>) -> impl Fold + '_ {
     }
   });
 
-  as_folder(ImportPlugin { config, renderer })
+  visit_mut_pass(ImportPlugin { config, renderer })
 }
 
 #[derive(Debug)]
@@ -326,7 +329,7 @@ pub struct ImportPlugin<'a> {
   pub renderer: handlebars::Handlebars<'a>,
 }
 
-impl<'a> ImportPlugin<'a> {
+impl ImportPlugin<'_> {
   // return (import_es, import_css)
   fn transform(&self, name: String, config: &ImportOptions) -> (Option<String>, Option<String>) {
     let should_ignore = &config
@@ -441,7 +444,7 @@ impl<'a> ImportPlugin<'a> {
   }
 }
 
-impl<'a> VisitMut for ImportPlugin<'a> {
+impl VisitMut for ImportPlugin<'_> {
   fn visit_mut_module(&mut self, module: &mut Module) {
     // use visitor to collect all ident reference, and then remove imported component and type that is never referenced
     let mut visitor = IdentComponent {

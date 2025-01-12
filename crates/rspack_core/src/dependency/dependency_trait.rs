@@ -1,13 +1,16 @@
 use std::{any::Any, fmt::Debug};
 
 use dyn_clone::{clone_trait_object, DynClone};
+use rspack_cacheable::cacheable_dyn;
 use rspack_collections::IdentifierSet;
 use rspack_error::Diagnostic;
+use rspack_util::atom::Atom;
 use rspack_util::ext::AsAny;
-use swc_core::ecma::atoms::Atom;
 
 use super::dependency_template::AsDependencyTemplate;
 use super::module_dependency::*;
+use super::DependencyLocation;
+use super::DependencyRange;
 use super::ExportsSpec;
 use super::{DependencyCategory, DependencyId, DependencyType};
 use crate::create_exports_object_referenced;
@@ -16,7 +19,7 @@ use crate::ExtendedReferencedExport;
 use crate::ImportAttributes;
 use crate::ModuleLayer;
 use crate::RuntimeSpec;
-use crate::{ConnectionState, Context, ErrorSpan, ModuleGraph, UsedByExports};
+use crate::{ConnectionState, Context, ModuleGraph, UsedByExports};
 
 #[derive(Debug, Clone, Copy)]
 pub enum AffectType {
@@ -25,6 +28,7 @@ pub enum AffectType {
   Transitive,
 }
 
+#[cacheable_dyn]
 pub trait Dependency:
   AsDependencyTemplate
   + AsContextDependency
@@ -73,11 +77,11 @@ pub trait Dependency:
     ConnectionState::Bool(true)
   }
 
-  fn loc(&self) -> Option<String> {
+  fn loc(&self) -> Option<DependencyLocation> {
     None
   }
 
-  fn span(&self) -> Option<ErrorSpan> {
+  fn range(&self) -> Option<&DependencyRange> {
     None
   }
 
@@ -85,9 +89,10 @@ pub trait Dependency:
     None
   }
 
-  // For now only `HarmonyImportSpecifierDependency` and
-  // `HarmonyExportImportedSpecifierDependency` can use this method
-  fn get_ids(&self, _mg: &ModuleGraph) -> Vec<Atom> {
+  // TODO: remove this once incremental build chunk graph is stable.
+  // For now only `ESMImportSpecifierDependency` and
+  // `ESMExportImportedSpecifierDependency` can use this method
+  fn _get_ids<'a>(&'a self, _mg: &'a ModuleGraph) -> &'a [Atom] {
     unreachable!()
   }
 

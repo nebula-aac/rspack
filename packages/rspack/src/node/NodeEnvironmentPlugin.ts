@@ -7,7 +7,7 @@
  * Copyright (c) JS Foundation and other contributors
  * https://github.com/webpack/webpack/blob/main/LICENSE
  */
-// @ts-expect-error
+// @ts-expect-error we directly import from enhanced-resolve inner js file to improve performance
 import CachedInputFileSystem from "enhanced-resolve/lib/CachedInputFileSystem";
 import fs from "graceful-fs";
 
@@ -52,7 +52,7 @@ export default class NodeEnvironmentPlugin {
 		);
 		compiler.inputFileSystem = inputFileSystem;
 		compiler.outputFileSystem = fs;
-		compiler.intermediateFileSystem = fs;
+		compiler.intermediateFileSystem = null;
 		compiler.watchFileSystem = new NodeWatchFileSystem(inputFileSystem);
 		compiler.hooks.beforeRun.tap("NodeEnvironmentPlugin", compiler => {
 			if (compiler.inputFileSystem === inputFileSystem) {

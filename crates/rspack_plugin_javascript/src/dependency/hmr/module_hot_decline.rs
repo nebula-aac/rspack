@@ -1,19 +1,22 @@
+use rspack_cacheable::{cacheable, cacheable_dyn, with::AsPreset};
 use rspack_core::{
   module_id, AsContextDependency, Compilation, Dependency, DependencyCategory, DependencyId,
-  DependencyTemplate, DependencyType, ErrorSpan, ModuleDependency, RealDependencyLocation,
-  RuntimeSpec, TemplateContext, TemplateReplaceSource,
+  DependencyRange, DependencyTemplate, DependencyType, ModuleDependency, RuntimeSpec,
+  TemplateContext, TemplateReplaceSource,
 };
 use swc_core::ecma::atoms::Atom;
 
+#[cacheable]
 #[derive(Debug, Clone)]
 pub struct ModuleHotDeclineDependency {
   id: DependencyId,
+  #[cacheable(with=AsPreset)]
   request: Atom,
-  range: RealDependencyLocation,
+  range: DependencyRange,
 }
 
 impl ModuleHotDeclineDependency {
-  pub fn new(request: Atom, range: RealDependencyLocation) -> Self {
+  pub fn new(request: Atom, range: DependencyRange) -> Self {
     Self {
       id: DependencyId::new(),
       request,
@@ -22,6 +25,7 @@ impl ModuleHotDeclineDependency {
   }
 }
 
+#[cacheable_dyn]
 impl Dependency for ModuleHotDeclineDependency {
   fn id(&self) -> &DependencyId {
     &self.id
@@ -35,8 +39,8 @@ impl Dependency for ModuleHotDeclineDependency {
     &DependencyType::ModuleHotDecline
   }
 
-  fn span(&self) -> Option<ErrorSpan> {
-    Some(ErrorSpan::new(self.range.start, self.range.end))
+  fn range(&self) -> Option<&DependencyRange> {
+    Some(&self.range)
   }
 
   fn could_affect_referencing_module(&self) -> rspack_core::AffectType {
@@ -44,6 +48,7 @@ impl Dependency for ModuleHotDeclineDependency {
   }
 }
 
+#[cacheable_dyn]
 impl ModuleDependency for ModuleHotDeclineDependency {
   fn request(&self) -> &str {
     &self.request
@@ -62,6 +67,7 @@ impl ModuleDependency for ModuleHotDeclineDependency {
   }
 }
 
+#[cacheable_dyn]
 impl DependencyTemplate for ModuleHotDeclineDependency {
   fn apply(
     &self,

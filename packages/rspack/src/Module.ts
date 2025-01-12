@@ -1,14 +1,15 @@
 import type {
 	JsCodegenerationResult,
+	JsContextModuleFactoryAfterResolveData,
+	JsContextModuleFactoryBeforeResolveData,
 	JsCreateData,
-	JsFactoryMeta,
-	JsModule,
-	ModuleDTO
+	JsFactoryMeta
 } from "@rspack/binding";
+import type { JsModule } from "@rspack/binding";
 import type { Source } from "webpack-sources";
 
-import type { Compilation } from "./Compilation";
 import { DependenciesBlock } from "./DependenciesBlock";
+import { Dependency } from "./Dependency";
 import { JsSource } from "./util/source";
 
 export type ResourceData = {
@@ -23,6 +24,7 @@ export type ResourceDataWithData = ResourceData & {
 export type CreateData = Partial<JsCreateData>;
 export type ContextInfo = {
 	issuer: string;
+	issuerLayer?: string;
 };
 export type ResolveData = {
 	contextInfo: ContextInfo;
@@ -34,82 +36,289 @@ export type ResolveData = {
 	createData?: CreateData;
 };
 
+export class ContextModuleFactoryBeforeResolveData {
+	#inner: JsContextModuleFactoryBeforeResolveData;
+
+	declare context: string;
+	declare request: string;
+	declare regExp: RegExp | undefined;
+	declare recursive: boolean;
+
+	static __from_binding(binding: JsContextModuleFactoryBeforeResolveData) {
+		return new ContextModuleFactoryBeforeResolveData(binding);
+	}
+
+	static __to_binding(
+		data: ContextModuleFactoryBeforeResolveData
+	): JsContextModuleFactoryBeforeResolveData {
+		return data.#inner;
+	}
+
+	private constructor(binding: JsContextModuleFactoryBeforeResolveData) {
+		this.#inner = binding;
+
+		Object.defineProperties(this, {
+			context: {
+				enumerable: true,
+				get(): string {
+					return binding.context;
+				},
+				set(val: string) {
+					binding.context = val;
+				}
+			},
+			request: {
+				enumerable: true,
+				get(): string {
+					return binding.request;
+				},
+				set(val: string) {
+					binding.request = val;
+				}
+			},
+			regExp: {
+				enumerable: true,
+				get(): RegExp | undefined {
+					return binding.regExp;
+				},
+				set(val: RegExp | undefined) {
+					binding.regExp = val;
+				}
+			},
+			recursive: {
+				enumerable: true,
+				get(this: ContextModuleFactoryAfterResolveData): boolean {
+					return binding.recursive;
+				},
+				set(val: boolean) {
+					binding.recursive = val;
+				}
+			}
+		});
+	}
+}
+
 export type ContextModuleFactoryBeforeResolveResult =
 	| false
-	| {
-			context: string;
-			request?: string;
-	  };
+	| ContextModuleFactoryBeforeResolveData;
+
+export class ContextModuleFactoryAfterResolveData {
+	#inner: JsContextModuleFactoryAfterResolveData;
+
+	declare resource: number;
+	declare context: string;
+	declare request: string;
+	declare regExp: RegExp | undefined;
+	declare recursive: boolean;
+	declare readonly dependencies: Dependency[];
+
+	static __from_binding(binding: JsContextModuleFactoryAfterResolveData) {
+		return new ContextModuleFactoryAfterResolveData(binding);
+	}
+
+	static __to_binding(
+		data: ContextModuleFactoryAfterResolveData
+	): JsContextModuleFactoryAfterResolveData {
+		return data.#inner;
+	}
+
+	private constructor(binding: JsContextModuleFactoryAfterResolveData) {
+		this.#inner = binding;
+
+		Object.defineProperties(this, {
+			resource: {
+				enumerable: true,
+				get(): string {
+					return binding.resource;
+				},
+				set(val: string) {
+					binding.resource = val;
+				}
+			},
+			context: {
+				enumerable: true,
+				get(): string {
+					return binding.context;
+				},
+				set(val: string) {
+					binding.context = val;
+				}
+			},
+			request: {
+				enumerable: true,
+				get(): string {
+					return binding.request;
+				},
+				set(val: string) {
+					binding.request = val;
+				}
+			},
+			regExp: {
+				enumerable: true,
+				get(): RegExp | undefined {
+					return binding.regExp;
+				},
+				set(val: RegExp | undefined) {
+					binding.regExp = val;
+				}
+			},
+			recursive: {
+				enumerable: true,
+				get(): boolean {
+					return binding.recursive;
+				},
+				set(val: boolean) {
+					binding.recursive = val;
+				}
+			},
+			dependencies: {
+				enumerable: true,
+				get(): Dependency[] {
+					return binding.dependencies.map(dep =>
+						Dependency.__from_binding(dep)
+					);
+				}
+			}
+		});
+	}
+}
 
 export type ContextModuleFactoryAfterResolveResult =
 	| false
-	| {
-			resource: string;
-			context: string;
-			request: string;
-			regExp?: RegExp;
-			dependencies: Array<any>;
-	  };
+	| ContextModuleFactoryAfterResolveData;
+
+const MODULE_MAPPINGS = new WeakMap<JsModule, Module>();
 
 export class Module {
-	#inner: JsModule | ModuleDTO;
-	#originalSource?: Source;
+	#inner: JsModule;
 
-	context?: Readonly<string>;
-	resource?: Readonly<string>;
-	request?: Readonly<string>;
-	userRequest?: Readonly<string>;
-	rawRequest?: Readonly<string>;
-	type: string;
-	layer: null | string;
-
-	factoryMeta?: Readonly<JsFactoryMeta>;
+	declare readonly context?: string;
+	declare readonly resource?: string;
+	declare readonly request?: string;
+	declare userRequest?: string;
+	declare readonly rawRequest?: string;
+	declare readonly type: string;
+	declare readonly layer: null | string;
+	declare readonly factoryMeta?: JsFactoryMeta;
 	/**
 	 * Records the dynamically added fields for Module on the JavaScript side.
 	 * These fields are generally used within a plugin, so they do not need to be passed back to the Rust side.
-	 * @see {@link Compilation#customModules}
 	 */
 	buildInfo: Record<string, any>;
 
 	/**
 	 * Records the dynamically added fields for Module on the JavaScript side.
 	 * These fields are generally used within a plugin, so they do not need to be passed back to the Rust side.
-	 * @see {@link Compilation#customModules}
 	 */
 	buildMeta: Record<string, any>;
+	declare readonly modules: Module[] | undefined;
+	declare readonly blocks: DependenciesBlock[];
+	declare readonly dependencies: Dependency[];
+	declare readonly useSourceMap: boolean;
 
-	static __from_binding(
-		module: JsModule | ModuleDTO,
-		compilation?: Compilation
-	) {
-		return new Module(module, compilation);
+	static __from_binding(binding: JsModule) {
+		let module = MODULE_MAPPINGS.get(binding);
+		if (module) {
+			return module;
+		}
+		module = new Module(binding);
+		MODULE_MAPPINGS.set(binding, module);
+		return module;
 	}
 
-	constructor(module: JsModule | ModuleDTO, compilation?: Compilation) {
-		this.#inner = module;
-		this.type = module.type;
-		this.layer = module.layer ?? null;
-		this.context = module.context;
-		this.resource = module.resource;
-		this.request = module.request;
-		this.userRequest = module.userRequest;
-		this.rawRequest = module.rawRequest;
+	static __to_binding(module: Module): JsModule {
+		return module.#inner;
+	}
 
-		this.factoryMeta = module.factoryMeta;
-		const customModule = compilation?.__internal__getCustomModule(
-			module.moduleIdentifier
-		);
-		this.buildInfo = customModule?.buildInfo || {};
-		this.buildMeta = customModule?.buildMeta || {};
+	constructor(module: JsModule) {
+		this.#inner = module;
+		this.buildInfo = {};
+		this.buildMeta = {};
+
+		Object.defineProperties(this, {
+			type: {
+				enumerable: true,
+				get(): string | null {
+					return module.type || null;
+				}
+			},
+			layer: {
+				enumerable: true,
+				get(): string | undefined {
+					return module.layer;
+				}
+			},
+			context: {
+				enumerable: true,
+				get(): string | undefined {
+					return module.context;
+				}
+			},
+			resource: {
+				enumerable: true,
+				get(): string | undefined {
+					return module.resource;
+				}
+			},
+			request: {
+				enumerable: true,
+				get(): string | undefined {
+					return module.request;
+				}
+			},
+			userRequest: {
+				enumerable: true,
+				get(): string | undefined {
+					return module.userRequest;
+				},
+				set(val: string) {
+					module.userRequest = val;
+				}
+			},
+			rawRequest: {
+				enumerable: true,
+				get(): string | undefined {
+					return module.rawRequest;
+				}
+			},
+			factoryMeta: {
+				enumerable: true,
+				get(): JsFactoryMeta | undefined | undefined {
+					return module.factoryMeta;
+				}
+			},
+			modules: {
+				enumerable: true,
+				get(): Module[] | undefined {
+					return module.modules
+						? module.modules.map(m => Module.__from_binding(m))
+						: undefined;
+				}
+			},
+			blocks: {
+				enumerable: true,
+				get(): DependenciesBlock[] {
+					return module.blocks.map(b => DependenciesBlock.__from_binding(b));
+				}
+			},
+			dependencies: {
+				enumerable: true,
+				get(): Dependency[] {
+					return module.dependencies.map(d => Dependency.__from_binding(d));
+				}
+			},
+			useSourceMap: {
+				enumerable: true,
+				get(): boolean {
+					return module.useSourceMap;
+				}
+			}
+		});
 	}
 
 	originalSource(): Source | null {
-		if (this.#originalSource) return this.#originalSource;
 		if (this.#inner.originalSource) {
-			this.#originalSource = JsSource.__from_binding(
-				this.#inner.originalSource
-			);
-			return this.#originalSource;
+			return JsSource.__from_binding(this.#inner.originalSource);
 		}
 		return null;
 	}
@@ -123,13 +332,6 @@ export class Module {
 			return this.#inner.nameForCondition;
 		}
 		return null;
-	}
-
-	get blocks(): DependenciesBlock[] {
-		if ("blocks" in this.#inner) {
-			return this.#inner.blocks.map(b => new DependenciesBlock(b));
-		}
-		return [];
 	}
 
 	size(type?: string): number {

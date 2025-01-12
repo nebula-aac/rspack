@@ -7,6 +7,14 @@ on:
         required: true
         type: string
         description: "Commit SHA"
+      profile:
+        required: true
+        type: choice
+        default: release
+        options:
+          - release
+          - release-debug
+        description: "release-debug means release with debug info for profile"
 
 permissions:
   # To publish packages with provenance
@@ -49,6 +57,7 @@ jobs:
       ref: ${{inputs.commit}}
       target: ${{ matrix.array.target }}
       runner: ${{ matrix.array.runner }}
+      profile: ${{inputs.profile}}
       test: false
 
   release:
@@ -66,7 +75,7 @@ jobs:
         uses: ./.github/actions/pnpm-cache
 
       - name: Download artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4.1.7
         with:
           path: artifacts
 
@@ -88,4 +97,4 @@ jobs:
           ./x publish snapshot --tag canary
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.RSPACK_CANARY_RELEASE_TOKEN }}

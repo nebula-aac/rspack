@@ -18,7 +18,7 @@ use rayon::prelude::*;
 use regex::Regex;
 use rspack_core::{
   rspack_sources::{
-    MapOptions, RawSource, SourceExt, SourceMap, SourceMapSource, SourceMapSourceOptions,
+    MapOptions, RawStringSource, SourceExt, SourceMap, SourceMapSource, SourceMapSourceOptions,
   },
   ChunkUkey, Compilation, CompilationChunkHash, CompilationProcessAssets, Plugin,
 };
@@ -156,14 +156,14 @@ async fn process_assets(&self, compilation: &mut Compilation) -> Result<()> {
 
       let is_matched = match_object(options, filename);
 
-      if !is_matched || original.get_info().minimized {
+      if !is_matched || original.get_info().minimized.unwrap_or(false) {
         return false;
       }
 
       true
     })
     .try_for_each(|(filename, original)| -> Result<()> {
-      if original.get_info().minimized {
+      if original.get_info().minimized.unwrap_or(false) {
         return Ok(());
       }
 
@@ -274,12 +274,12 @@ async fn process_assets(&self, compilation: &mut Compilation) -> Result<()> {
           })
           .boxed()
         } else {
-          RawSource::from(result.code).boxed()
+          RawStringSource::from(result.code).boxed()
         };
 
         original.set_source(Some(minimized_source));
       }
-      original.get_info_mut().minimized = true;
+      original.get_info_mut().minimized.replace(true);
       Ok(())
     })?;
 
@@ -296,7 +296,7 @@ impl Plugin for LightningCssMinimizerRspackPlugin {
   fn apply(
     &self,
     ctx: rspack_core::PluginContext<&mut rspack_core::ApplyContext>,
-    _options: &mut rspack_core::CompilerOptions,
+    _options: &rspack_core::CompilerOptions,
   ) -> Result<()> {
     ctx
       .context

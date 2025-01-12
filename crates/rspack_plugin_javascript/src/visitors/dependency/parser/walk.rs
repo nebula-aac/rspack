@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use swc_core::common::Spanned;
 use swc_core::ecma::ast::{
   ArrayLit, ArrayPat, ArrowExpr, AssignExpr, AssignPat, AssignTarget, AssignTargetPat, AwaitExpr,
-  Param, SimpleAssignTarget,
+  GetterProp, Param, SetterProp, SimpleAssignTarget,
 };
 use swc_core::ecma::ast::{BinExpr, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, CatchClause};
 use swc_core::ecma::ast::{Class, ClassExpr, ClassMember, CondExpr, DefaultDecl};
@@ -30,7 +30,7 @@ fn warp_ident_to_pat(ident: Ident) -> Pat {
   Pat::Ident(ident.into())
 }
 
-impl<'parser> JavascriptParser<'parser> {
+impl JavascriptParser<'_> {
   fn in_block_scope<F>(&mut self, f: F)
   where
     F: FnOnce(&mut Self),
@@ -78,7 +78,7 @@ impl<'parser> JavascriptParser<'parser> {
     self.in_tagged_template_tag = old_in_tagged_template_tag;
   }
 
-  fn in_function_scope<'a, I, F>(&mut self, has_this: bool, params: I, f: F)
+  pub(crate) fn in_function_scope<'a, I, F>(&mut self, has_this: bool, params: I, f: F)
   where
     F: FnOnce(&mut Self),
     I: Iterator<Item = Cow<'a, Pat>>,
@@ -151,7 +151,7 @@ impl<'parser> JavascriptParser<'parser> {
     }
   }
 
-  fn walk_statement(&mut self, statement: Statement) {
+  pub(crate) fn walk_statement(&mut self, statement: Statement) {
     self.enter_statement(
       &statement,
       |parser, _| {
@@ -529,6 +529,42 @@ impl<'parser> JavascriptParser<'parser> {
     self.walk_expression(&kv.value);
   }
 
+  fn walk_getter_prop(&mut self, getter: &GetterProp) {
+    self.walk_prop_name(&getter.key);
+    let was_top_level = self.top_level_scope;
+    self.top_level_scope = TopLevelScope::False;
+    self.in_function_scope(true, std::iter::empty(), |parser| {
+      if let Some(body) = &getter.body {
+        parser.detect_mode(&body.stmts);
+        let prev = parser.prev_statement;
+        parser.pre_walk_statement(Statement::Block(body));
+        parser.prev_statement = prev;
+        parser.walk_statement(Statement::Block(body));
+      }
+    });
+    self.top_level_scope = was_top_level;
+  }
+
+  fn walk_setter_prop(&mut self, setter: &SetterProp) {
+    self.walk_prop_name(&setter.key);
+    let was_top_level = self.top_level_scope;
+    self.top_level_scope = TopLevelScope::False;
+    self.in_function_scope(
+      true,
+      std::iter::once(Cow::Borrowed(setter.param.as_ref())),
+      |parser| {
+        if let Some(body) = &setter.body {
+          parser.detect_mode(&body.stmts);
+          let prev = parser.prev_statement;
+          parser.pre_walk_statement(Statement::Block(body));
+          parser.prev_statement = prev;
+          parser.walk_statement(Statement::Block(body));
+        }
+      },
+    );
+    self.top_level_scope = was_top_level;
+  }
+
   fn walk_property(&mut self, prop: &Prop) {
     match prop {
       Prop::Shorthand(ident) => {
@@ -538,32 +574,8 @@ impl<'parser> JavascriptParser<'parser> {
       }
       Prop::KeyValue(kv) => self.walk_key_value_prop(kv),
       Prop::Assign(assign) => self.walk_expression(&assign.value),
-      Prop::Getter(getter) => {
-        self.walk_prop_name(&getter.key);
-        let was_top_level = self.top_level_scope;
-        self.top_level_scope = TopLevelScope::False;
-        self.in_function_scope(true, std::iter::empty(), |parser| {
-          if let Some(body) = &getter.body {
-            parser.walk_statement(Statement::Block(body));
-          }
-        });
-        self.top_level_scope = was_top_level;
-      }
-      Prop::Setter(setter) => {
-        self.walk_prop_name(&setter.key);
-        let was_top_level = self.top_level_scope;
-        self.top_level_scope = TopLevelScope::False;
-        self.in_function_scope(
-          true,
-          std::iter::once(Cow::Borrowed(setter.param.as_ref())),
-          |parser| {
-            if let Some(body) = &setter.body {
-              parser.walk_statement(Statement::Block(body));
-            }
-          },
-        );
-        self.top_level_scope = was_top_level;
-      }
+      Prop::Getter(getter) => self.walk_getter_prop(getter),
+      Prop::Setter(setter) => self.walk_setter_prop(setter),
       Prop::Method(method) => {
         self.walk_prop_name(&method.key);
         let was_top_level = self.top_level_scope;

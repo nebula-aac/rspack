@@ -1,22 +1,18 @@
-pub mod hot_module_replacement {
-  pub use super::ImportMetaHotReplacementParserPlugin;
-  pub use super::ModuleHotReplacementParserPlugin;
-}
-
-use rspack_core::{BoxDependency, RealDependencyLocation, SpanExt};
+use rspack_core::{BoxDependency, DependencyRange, SpanExt};
 use swc_core::common::{Span, Spanned};
 use swc_core::ecma::ast::{CallExpr, Expr, Lit};
 use swc_core::ecma::atoms::Atom;
 
 use crate::dependency::{
-  HarmonyAcceptDependency, ImportMetaHotAcceptDependency, ImportMetaHotDeclineDependency,
-  ModuleArgumentDependency, ModuleHotAcceptDependency, ModuleHotDeclineDependency,
+  import_emitted_runtime, ESMAcceptDependency, ImportMetaHotAcceptDependency,
+  ImportMetaHotDeclineDependency, ModuleArgumentDependency, ModuleHotAcceptDependency,
+  ModuleHotDeclineDependency,
 };
 use crate::parser_plugin::JavascriptParserPlugin;
 use crate::utils::eval;
 use crate::visitors::{expr_name, JavascriptParser};
 
-type CreateDependency = fn(Atom, RealDependencyLocation) -> BoxDependency;
+type CreateDependency = fn(Atom, DependencyRange) -> BoxDependency;
 
 fn extract_deps(call_expr: &CallExpr, create_dependency: CreateDependency) -> Vec<BoxDependency> {
   let mut dependencies: Vec<BoxDependency> = vec![];
@@ -42,15 +38,15 @@ fn extract_deps(call_expr: &CallExpr, create_dependency: CreateDependency) -> Ve
   dependencies
 }
 
-impl<'parser> JavascriptParser<'parser> {
+impl JavascriptParser<'_> {
   fn create_hmr_expression_handler(&mut self, span: Span) {
-    let range: RealDependencyLocation = span.into();
     self.build_info.module_concatenation_bailout = Some(String::from("Hot Module Replacement"));
     self
       .presentational_dependencies
       .push(Box::new(ModuleArgumentDependency::new(
-        Some("hot"),
-        range.with_source(self.source_map.clone()),
+        Some("hot".into()),
+        span.into(),
+        Some(self.source_map.clone()),
       )));
   }
 
@@ -59,29 +55,30 @@ impl<'parser> JavascriptParser<'parser> {
     call_expr: &CallExpr,
     create_dependency: CreateDependency,
   ) -> Option<bool> {
-    let range: RealDependencyLocation = call_expr.callee.span().into();
     self.build_info.module_concatenation_bailout = Some(String::from("Hot Module Replacement"));
     self
       .presentational_dependencies
       .push(Box::new(ModuleArgumentDependency::new(
-        Some("hot.accept"),
-        range.with_source(self.source_map.clone()),
+        Some("hot.accept".into()),
+        call_expr.callee.span().into(),
+        Some(self.source_map.clone()),
       )));
     let dependencies = extract_deps(call_expr, create_dependency);
     if self.build_meta.esm && !call_expr.args.is_empty() {
       let dependency_ids = dependencies.iter().map(|dep| *dep.id()).collect::<Vec<_>>();
       let callback_arg = call_expr.args.get(1);
       let range = if let Some(callback) = callback_arg {
-        Into::<RealDependencyLocation>::into(callback.span())
+        Into::<DependencyRange>::into(callback.span())
       } else {
-        RealDependencyLocation::new(call_expr.span().real_hi() - 1, 0)
+        DependencyRange::new(call_expr.span().real_hi() - 1, 0)
       };
       self
         .presentational_dependencies
-        .push(Box::new(HarmonyAcceptDependency::new(
-          range.with_source(self.source_map.clone()),
+        .push(Box::new(ESMAcceptDependency::new(
+          range,
           callback_arg.is_some(),
           dependency_ids,
+          Some(self.source_map.clone()),
         )));
     }
     self.dependencies.extend(dependencies);
@@ -94,13 +91,13 @@ impl<'parser> JavascriptParser<'parser> {
     call_expr: &CallExpr,
     create_dependency: CreateDependency,
   ) -> Option<bool> {
-    let range: RealDependencyLocation = call_expr.callee.span().into();
     self.build_info.module_concatenation_bailout = Some(String::from("Hot Module Replacement"));
     self
       .presentational_dependencies
       .push(Box::new(ModuleArgumentDependency::new(
-        Some("hot.decline"),
-        range.with_source(self.source_map.clone()),
+        Some("hot.decline".into()),
+        call_expr.callee.span().into(),
+        Some(self.source_map.clone()),
       )));
     let dependencies = extract_deps(call_expr, create_dependency);
     self.dependencies.extend(dependencies);
@@ -108,7 +105,17 @@ impl<'parser> JavascriptParser<'parser> {
   }
 }
 
-pub struct ModuleHotReplacementParserPlugin;
+pub struct ModuleHotReplacementParserPlugin {
+  _private: (),
+}
+
+impl ModuleHotReplacementParserPlugin {
+  #[allow(clippy::new_without_default)]
+  pub fn new() -> Self {
+    import_emitted_runtime::init_map();
+    Self { _private: () }
+  }
+}
 
 impl JavascriptParserPlugin for ModuleHotReplacementParserPlugin {
   fn evaluate_identifier(
@@ -165,7 +172,17 @@ impl JavascriptParserPlugin for ModuleHotReplacementParserPlugin {
   }
 }
 
-pub struct ImportMetaHotReplacementParserPlugin;
+pub struct ImportMetaHotReplacementParserPlugin {
+  _private: (),
+}
+
+impl ImportMetaHotReplacementParserPlugin {
+  #[allow(clippy::new_without_default)]
+  pub fn new() -> Self {
+    import_emitted_runtime::init_map();
+    Self { _private: () }
+  }
+}
 
 impl JavascriptParserPlugin for ImportMetaHotReplacementParserPlugin {
   fn evaluate_identifier(

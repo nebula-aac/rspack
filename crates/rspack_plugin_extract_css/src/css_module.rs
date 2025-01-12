@@ -1,19 +1,19 @@
 use std::hash::Hash;
-use std::path::PathBuf;
-use std::sync::LazyLock;
 
+use rspack_cacheable::{cacheable, cacheable_dyn};
 use rspack_collections::{Identifiable, Identifier};
 use rspack_core::rspack_sources::Source;
 use rspack_core::{
   impl_module_meta_info, impl_source_map_config, module_update_hash,
   AsyncDependenciesBlockIdentifier, BuildContext, BuildInfo, BuildMeta, BuildResult,
   CodeGenerationResult, Compilation, CompilerOptions, ConcatenationScope, DependenciesBlock,
-  DependencyId, DependencyType, FactoryMeta, Module, ModuleFactory, ModuleFactoryCreateData,
-  ModuleFactoryResult, RuntimeSpec, SourceType,
+  DependencyId, FactoryMeta, Module, ModuleFactory, ModuleFactoryCreateData, ModuleFactoryResult,
+  RuntimeSpec, SourceType,
 };
 use rspack_error::Result;
 use rspack_error::{impl_empty_diagnosable_trait, Diagnostic};
 use rspack_hash::{RspackHash, RspackHashDigest};
+use rspack_paths::ArcPath;
 use rspack_util::ext::DynHash;
 use rspack_util::itoa;
 use rustc_hash::FxHashSet;
@@ -21,10 +21,8 @@ use rustc_hash::FxHashSet;
 use crate::css_dependency::CssDependency;
 use crate::plugin::{MODULE_TYPE, SOURCE_TYPE};
 
-pub(crate) static DEPENDENCY_TYPE: LazyLock<DependencyType> =
-  LazyLock::new(|| DependencyType::Custom("mini-extract-dep"));
-
 #[impl_source_map_config]
+#[cacheable]
 #[derive(Debug)]
 pub(crate) struct CssModule {
   pub(crate) identifier: String,
@@ -45,10 +43,10 @@ pub(crate) struct CssModule {
 
   identifier__: Identifier,
   cacheable: bool,
-  file_dependencies: FxHashSet<PathBuf>,
-  context_dependencies: FxHashSet<PathBuf>,
-  missing_dependencies: FxHashSet<PathBuf>,
-  build_dependencies: FxHashSet<PathBuf>,
+  file_dependencies: FxHashSet<ArcPath>,
+  context_dependencies: FxHashSet<ArcPath>,
+  missing_dependencies: FxHashSet<ArcPath>,
+  build_dependencies: FxHashSet<ArcPath>,
 }
 
 impl CssModule {
@@ -102,6 +100,7 @@ impl CssModule {
   }
 }
 
+#[cacheable_dyn]
 #[async_trait::async_trait]
 impl Module for CssModule {
   impl_module_meta_info!();
@@ -145,7 +144,7 @@ impl Module for CssModule {
       .map(|resource| resource.split('?').next().unwrap_or(resource).into())
   }
 
-  fn size(&self, _source_type: Option<&SourceType>, _compilation: &Compilation) -> f64 {
+  fn size(&self, _source_type: Option<&SourceType>, _compilation: Option<&Compilation>) -> f64 {
     self.content.len() as f64
   }
 
@@ -161,15 +160,20 @@ impl Module for CssModule {
     &*SOURCE_TYPE
   }
 
+  fn need_id(&self) -> bool {
+    false
+  }
+
   async fn build(
     &mut self,
-    build_context: BuildContext<'_>,
+    build_context: BuildContext,
     _compilation: Option<&Compilation>,
   ) -> Result<BuildResult> {
     Ok(BuildResult {
       build_info: BuildInfo {
-        hash: Some(self.compute_hash(build_context.compiler_options)),
+        hash: Some(self.compute_hash(&build_context.compiler_options)),
         cacheable: self.cacheable,
+        strict: true,
         file_dependencies: self.file_dependencies.clone(),
         context_dependencies: self.context_dependencies.clone(),
         missing_dependencies: self.missing_dependencies.clone(),
@@ -180,7 +184,7 @@ impl Module for CssModule {
     })
   }
 
-  #[tracing::instrument(name = "ExtractCssModule::code_generation", skip_all, fields(identifier = ?self.identifier()))]
+  // #[tracing::instrument("ExtractCssModule::code_generation", skip_all, fields(identifier = ?self.identifier()))]
   fn code_generation(
     &self,
     _compilation: &Compilation,
@@ -230,6 +234,10 @@ impl DependenciesBlock for CssModule {
     self.dependencies.push(dependency)
   }
 
+  fn remove_dependency_id(&mut self, dependency: DependencyId) {
+    self.dependencies.retain(|d| d != &dependency)
+  }
+
   fn get_dependencies(&self) -> &[DependencyId] {
     &self.dependencies
   }
@@ -241,8 +249,7 @@ pub(crate) struct CssModuleFactory;
 #[async_trait::async_trait]
 impl ModuleFactory for CssModuleFactory {
   async fn create(&self, data: &mut ModuleFactoryCreateData) -> Result<ModuleFactoryResult> {
-    let css_dep = data
-      .dependency
+    let css_dep = data.dependencies[0]
       .downcast_ref::<CssDependency>()
       .expect("unreachable");
 

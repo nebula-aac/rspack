@@ -60,7 +60,7 @@ const watchCreator = new BasicCaseCreator({
 	description: (name, index) => {
 		return index === 0
 			? `${name} should compile`
-			: "should compile the next step";
+			: `should compile the next step ${index}`;
 	},
 	describe: false,
 	steps: ({ name, src, temp }) => {
@@ -82,9 +82,7 @@ const watchCreator = new BasicCaseCreator({
 						compilerType: ECompilerType.Rspack,
 						configFiles: ["rspack.config.js", "webpack.config.js"],
 						experiments: {
-							rspackFuture: {
-								newIncremental: true
-							}
+							incremental: true
 						}
 					})
 				: new WatchStepProcessor({

@@ -1,9 +1,11 @@
+mod boxfs;
 mod factory;
 mod resolver_impl;
 use std::borrow::Borrow;
 use std::fmt;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -40,7 +42,7 @@ pub struct ResolveArgs<'a> {
   pub dependency_type: &'a DependencyType,
   pub dependency_category: &'a DependencyCategory,
   pub span: Option<ErrorSpan>,
-  pub resolve_options: Option<Box<Resolve>>,
+  pub resolve_options: Option<Arc<Resolve>>,
   pub resolve_to_context: bool,
   pub optional: bool,
   pub file_dependencies: &'a mut FxHashSet<PathBuf>,
@@ -93,7 +95,9 @@ pub fn resolve_for_error_hints(
   plugin_driver: &SharedPluginDriver,
 ) -> Option<String> {
   let dep = ResolveOptionsWithDependencyType {
-    resolve_options: args.resolve_options.clone(),
+    resolve_options: args
+      .resolve_options
+      .map(|r| Box::new(Arc::unwrap_or_clone(r))),
     resolve_to_context: args.resolve_to_context,
     dependency_category: *args.dependency_category,
   };
@@ -134,7 +138,7 @@ pub fn resolve_for_error_hints(
       {
         // If the specifier is a relative path pointing to the current directory,
         // we can suggest the path relative to the current directory.
-        format!("{}{}", prefix, relative_path)
+        format!("{prefix}{relative_path}")
       } else if PARENT_PATH_REGEX.is_match(args.specifier) {
         // If the specifier is a relative path to which the parent directory is,
         // then we return the relative path directly.
@@ -240,7 +244,7 @@ which tries to resolve these kind of requests in the current directory too.",
                   let mut suggestion = file.path().relative(&args.context).assert_utf8();
 
                   if !suggestion.as_str().starts_with('.') {
-                    suggestion = Utf8PathBuf::from(format!("./{}", suggestion));
+                    suggestion = Utf8PathBuf::from(format!("./{suggestion}"));
                   }
                   Some(suggestion)
                 } else {
@@ -278,12 +282,24 @@ if its extension was not listed in the `resolve.extensions`. Here're some possib
 }
 
 /// Main entry point for module resolution.
+// #[tracing::instrument(err, "resolve", skip_all, fields(
+//     resolve.specifier = args.specifier,
+//     resolve.importer = ?args.importer,
+//     resolve.context = ?args.context,
+//     resolve.dependency_type = ?args.dependency_type,
+//     resolve.dependency_category = ?args.dependency_category
+//   ),
+//   level = "trace"
+// )]
 pub async fn resolve(
   args: ResolveArgs<'_>,
   plugin_driver: &SharedPluginDriver,
 ) -> Result<ResolveResult, Error> {
   let dep = ResolveOptionsWithDependencyType {
-    resolve_options: args.resolve_options.clone(),
+    resolve_options: args
+      .resolve_options
+      .clone()
+      .map(|r| Box::new(Arc::unwrap_or_clone(r))),
     resolve_to_context: args.resolve_to_context,
     dependency_category: *args.dependency_category,
   };
@@ -293,6 +309,18 @@ pub async fn resolve(
   let mut result = resolver
     .resolve_with_context(args.context.as_ref(), args.specifier, &mut context)
     .map_err(|error| error.into_resolve_error(&args));
+
+  if let Err(ref err) = result {
+    tracing::error!(
+      specifier = args.specifier,
+      importer = ?args.importer,
+      context = %args.context,
+      dependency_type = %args.dependency_type,
+      dependency_category = %args.dependency_category,
+      "Resolve error: {}",
+      err.to_string()
+    );
+  }
 
   args.file_dependencies.extend(context.file_dependencies);
   args

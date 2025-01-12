@@ -1,6 +1,4 @@
-use rspack_core::{
-  ConstDependency, ContextDependency, RealDependencyLocation, RuntimeGlobals, SpanExt,
-};
+use rspack_core::{ConstDependency, ContextDependency, DependencyRange, RuntimeGlobals, SpanExt};
 use rspack_util::itoa;
 use swc_core::{common::Spanned, ecma::ast::CallExpr};
 
@@ -16,7 +14,7 @@ const NESTED_WEBPACK_IDENTIFIER_TAG: &str = "_identifier__nested_webpack_identif
 struct NestedRequireData {
   name: String,
   update: bool,
-  loc: RealDependencyLocation,
+  loc: DependencyRange,
 }
 
 pub struct CompatibilityPlugin;
@@ -68,7 +66,7 @@ impl CompatibilityPlugin {
       Some(NestedRequireData {
         name: rename,
         update: false,
-        loc: RealDependencyLocation::new(start, end).with_source(parser.source_map.clone()),
+        loc: DependencyRange::new(start, end),
       }),
     );
   }
@@ -100,9 +98,9 @@ impl JavascriptParserPlugin for CompatibilityPlugin {
     decl: &swc_core::ecma::ast::VarDeclarator,
     _statement: &swc_core::ecma::ast::VarDecl,
   ) -> Option<bool> {
-    if let Some(ident) = decl.name.as_ident()
-      && ident.sym.as_str() == RuntimeGlobals::REQUIRE.name()
-    {
+    let ident = decl.name.as_ident()?;
+
+    if ident.sym.as_str() == RuntimeGlobals::REQUIRE.name() {
       let start = ident.span().real_lo();
       let end = ident.span().real_hi();
       self.tag_nested_require_data(
@@ -113,7 +111,17 @@ impl JavascriptParserPlugin for CompatibilityPlugin {
         end,
       );
       return Some(true);
+    } else if ident.sym == RuntimeGlobals::EXPORTS.name() {
+      self.tag_nested_require_data(
+        parser,
+        ident.sym.to_string(),
+        "__nested_webpack_exports__".to_string(),
+        ident.span().real_lo(),
+        ident.span().real_hi(),
+      );
+      return Some(true);
     }
+
     None
   }
 
