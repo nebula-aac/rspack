@@ -78,6 +78,7 @@ pub struct StatsWarning<'s> {
 pub struct StatsModuleTrace {
   pub origin: StatsErrorModuleTraceModule,
   pub module: StatsErrorModuleTraceModule,
+  pub dependencies: Vec<StatsErrorModuleTraceDependency>,
 }
 
 #[derive(Debug)]
@@ -85,6 +86,11 @@ pub struct StatsErrorModuleTraceModule {
   pub identifier: ModuleIdentifier,
   pub name: String,
   pub id: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct StatsErrorModuleTraceDependency {
+  pub loc: String,
 }
 
 #[derive(Debug)]
@@ -110,11 +116,12 @@ pub struct StatsAssetsByChunkName {
 
 #[derive(Debug)]
 pub struct StatsAssetInfo {
-  pub minimized: bool,
-  pub development: bool,
-  pub hot_module_replacement: bool,
+  pub minimized: Option<bool>,
+  pub development: Option<bool>,
+  pub hot_module_replacement: Option<bool>,
   pub source_filename: Option<String>,
-  pub immutable: bool,
+  pub copied: Option<bool>,
+  pub immutable: Option<bool>,
   pub javascript_module: Option<bool>,
   pub chunk_hash: Vec<String>,
   pub content_hash: Vec<String>,
@@ -219,7 +226,7 @@ pub struct StatsChunk<'a> {
 #[derive(Debug)]
 pub struct StatsChunkGroupAsset {
   pub name: String,
-  pub size: f64,
+  pub size: usize,
 }
 
 #[derive(Debug)]
@@ -227,9 +234,9 @@ pub struct StatsChunkGroup {
   pub name: String,
   pub chunks: Vec<String>,
   pub assets: Vec<StatsChunkGroupAsset>,
-  pub assets_size: f64,
+  pub assets_size: usize,
   pub auxiliary_assets: Option<Vec<StatsChunkGroupAsset>>,
-  pub auxiliary_assets_size: Option<f64>,
+  pub auxiliary_assets_size: Option<usize>,
   pub children: Option<StatsChunkGroupChildren>,
   pub is_over_size_limit: Option<bool>,
   pub child_assets: Option<StatschunkGroupChildAssets>,
@@ -266,6 +273,9 @@ pub struct StatsModuleReason<'s> {
 
   pub r#type: Option<&'static str>,
   pub user_request: Option<&'s str>,
+  pub explanation: Option<&'static str>,
+  pub active: bool,
+  pub loc: Option<String>,
 }
 
 #[derive(Debug)]

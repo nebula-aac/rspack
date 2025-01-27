@@ -1,7 +1,8 @@
 // https://github.com/webpack/webpack/blob/main/lib/WarnCaseSensitiveModulesPlugin.js
 
-use std::{collections::HashMap, hash::BuildHasherDefault};
+use std::collections::HashMap;
 
+use cow_utils::CowUtils;
 use rspack_collections::{Identifier, IdentifierSet};
 use rspack_core::{
   ApplyContext, Compilation, CompilationSeal, CompilerOptions, Logger, ModuleGraph, Plugin,
@@ -9,7 +10,7 @@ use rspack_core::{
 };
 use rspack_error::{Diagnostic, Result};
 use rspack_hook::{plugin, plugin_hook};
-use rustc_hash::{FxHashMap, FxHasher};
+use rustc_hash::{FxBuildHasher, FxHashMap};
 
 #[plugin]
 #[derive(Debug, Default)]
@@ -26,17 +27,18 @@ impl WarnCaseSensitiveModulesPlugin {
 
     for m in modules {
       if let Some(boxed_m) = graph.module_by_identifier(&m) {
-        let mut module_msg = format!("  - {}\n", m);
+        message.push_str("  - ");
+        message.push_str(&m);
+        message.push('\n');
         graph
           .get_incoming_connections(&boxed_m.identifier())
-          .iter()
           .for_each(|c| {
             if let Some(original_identifier) = c.original_module_identifier {
-              module_msg.push_str(&format!("    - used by {}\n", original_identifier));
+              message.push_str("    - used by ");
+              message.push_str(&original_identifier);
+              message.push('\n');
             }
           });
-
-        message.push_str(&module_msg);
       }
     }
 
@@ -50,10 +52,8 @@ async fn seal(&self, compilation: &mut Compilation) -> Result<()> {
   let start = logger.time("check case sensitive modules");
   let mut diagnostics: Vec<Diagnostic> = vec![];
   let module_graph = compilation.get_module_graph();
-  let mut not_conflect: FxHashMap<String, Identifier> = HashMap::with_capacity_and_hasher(
-    module_graph.modules().len(),
-    BuildHasherDefault::<FxHasher>::default(),
-  );
+  let mut not_conflect: FxHashMap<String, Identifier> =
+    HashMap::with_capacity_and_hasher(module_graph.modules().len(), FxBuildHasher);
   let mut conflict: FxHashMap<String, IdentifierSet> = FxHashMap::default();
 
   for module in module_graph.modules().values() {
@@ -69,16 +69,16 @@ async fn seal(&self, compilation: &mut Compilation) -> Result<()> {
     }
 
     let identifier = module.identifier();
-    let lower_identifier = identifier.to_lowercase();
-    if let Some(prev_identifier) = not_conflect.remove(&lower_identifier) {
+    let lower_identifier = identifier.cow_to_lowercase();
+    if let Some(prev_identifier) = not_conflect.remove(lower_identifier.as_ref()) {
       conflict.insert(
-        lower_identifier,
+        lower_identifier.into_owned(),
         IdentifierSet::from_iter([prev_identifier, identifier]),
       );
-    } else if let Some(set) = conflict.get_mut(&lower_identifier) {
+    } else if let Some(set) = conflict.get_mut(lower_identifier.as_ref()) {
       set.insert(identifier);
     } else {
-      not_conflect.insert(lower_identifier, identifier);
+      not_conflect.insert(lower_identifier.into_owned(), identifier);
     }
   }
 
@@ -108,11 +108,7 @@ impl Plugin for WarnCaseSensitiveModulesPlugin {
     "rspack.WarnCaseSensitiveModulesPlugin"
   }
 
-  fn apply(
-    &self,
-    ctx: PluginContext<&mut ApplyContext>,
-    _options: &mut CompilerOptions,
-  ) -> Result<()> {
+  fn apply(&self, ctx: PluginContext<&mut ApplyContext>, _options: &CompilerOptions) -> Result<()> {
     ctx.context.compilation_hooks.seal.tap(seal::new(self));
     Ok(())
   }

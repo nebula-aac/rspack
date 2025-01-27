@@ -196,14 +196,13 @@ pub(crate) mod expr_matcher {
     is_module_require: "module.require",
     is_webpack_module_id: "__webpack_module__.id",
     is_object_define_property: "Object.defineProperty",
+    is_require_ensure: "require.ensure",
+    is_require_version: "require.version",
+    is_require_onerror: "require.onError",
     // unsupported
     is_require_extensions: "require.extensions",
-    is_require_ensure: "require.ensure",
     is_require_config: "require.config",
-    is_require_version: "require.version",
-    is_require_amd: "require.amd",
     is_require_include: "require.include",
-    is_require_onerror: "require.onError",
     is_require_main_require: "require.main.require",
     is_module_parent_require: "module.parent.require",
   });
@@ -226,12 +225,12 @@ pub mod expr_name {
   pub const IMPORT_META_WEBPACK_CONTEXT: &str = "import.meta.webpackContext";
 }
 
-pub fn parse_order_string(x: &str) -> Option<u32> {
+pub fn parse_order_string(x: &str) -> Option<i32> {
   match x {
     "true" => Some(0),
     "false" => None,
     _ => {
-      if let Ok(order) = x.parse::<u32>() {
+      if let Ok(order) = x.parse::<i32>() {
         Some(order)
       } else {
         None
@@ -275,18 +274,16 @@ pub fn extract_require_call_info(
 
 pub fn is_require_call_start(expr: &Expr) -> bool {
   match expr {
-    Expr::Call(CallExpr { callee, .. }) => {
-      return callee
-        .as_expr()
-        .map(|callee| {
-          if expr_matcher::is_require(&**callee) || expr_matcher::is_module_require(&**callee) {
-            true
-          } else {
-            is_require_call_start(callee)
-          }
-        })
-        .unwrap_or(false);
-    }
+    Expr::Call(CallExpr { callee, .. }) => callee
+      .as_expr()
+      .map(|callee| {
+        if expr_matcher::is_require(&**callee) || expr_matcher::is_module_require(&**callee) {
+          true
+        } else {
+          is_require_call_start(callee)
+        }
+      })
+      .unwrap_or(false),
     Expr::Member(MemberExpr { obj, .. }) => is_require_call_start(obj),
     _ => false,
   }

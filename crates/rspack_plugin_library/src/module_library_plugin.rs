@@ -1,9 +1,10 @@
 use std::hash::Hash;
 
-use rspack_core::rspack_sources::{ConcatSource, RawSource, SourceExt};
+use rspack_core::rspack_sources::{ConcatSource, RawStringSource, SourceExt};
 use rspack_core::{
   property_access, to_identifier, ApplyContext, ChunkUkey, Compilation, CompilationParams,
-  CompilerCompilation, CompilerOptions, LibraryOptions, ModuleIdentifier, Plugin, PluginContext,
+  CompilerCompilation, CompilerOptions, ExportInfoProvided, LibraryOptions, ModuleGraph,
+  ModuleIdentifier, Plugin, PluginContext,
 };
 use rspack_error::{error_bail, Result};
 use rspack_hash::RspackHash;
@@ -64,32 +65,38 @@ fn render_startup(
     return Ok(());
   };
   let mut source = ConcatSource::default();
+  let is_async = ModuleGraph::is_async(compilation, module);
   let module_graph = compilation.get_module_graph();
   source.add(render_source.source.clone());
   let mut exports = vec![];
-  if let Some(is_async) = module_graph.is_async(module)
-    && is_async
-  {
-    source.add(RawSource::from(
+  if is_async {
+    source.add(RawStringSource::from(
       "__webpack_exports__ = await __webpack_exports__;\n",
     ));
   }
   let exports_info = module_graph.get_exports_info(module);
   for export_info in exports_info.ordered_exports(&module_graph) {
+    if !(matches!(
+      export_info.provided(&module_graph),
+      Some(ExportInfoProvided::True)
+    )) {
+      continue;
+    };
+
     let chunk = compilation.chunk_by_ukey.expect_get(chunk_ukey);
     let info_name = export_info.name(&module_graph).expect("should have name");
     let used_name = export_info
-      .get_used_name(&module_graph, Some(info_name), Some(&chunk.runtime))
+      .get_used_name(&module_graph, Some(info_name), Some(chunk.runtime()))
       .expect("name can't be empty");
     let var_name = format!("__webpack_exports__{}", to_identifier(info_name));
-    source.add(RawSource::from(format!(
+    source.add(RawStringSource::from(format!(
       "var {var_name} = __webpack_exports__{};\n",
       property_access(vec![used_name], 0)
     )));
     exports.push(format!("{var_name} as {}", info_name));
   }
   if !exports.is_empty() {
-    source.add(RawSource::from(format!(
+    source.add(RawStringSource::from(format!(
       "export {{ {} }};\n",
       exports.join(", ")
     )));
@@ -117,11 +124,7 @@ impl Plugin for ModuleLibraryPlugin {
     PLUGIN_NAME
   }
 
-  fn apply(
-    &self,
-    ctx: PluginContext<&mut ApplyContext>,
-    _options: &mut CompilerOptions,
-  ) -> Result<()> {
+  fn apply(&self, ctx: PluginContext<&mut ApplyContext>, _options: &CompilerOptions) -> Result<()> {
     ctx
       .context
       .compiler_hooks

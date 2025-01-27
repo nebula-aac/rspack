@@ -154,7 +154,7 @@ module.exports = {
 
 ## output.clean
 
-- **Type:** `boolean`
+- **Type:** `boolean | { keep?: string }`
 - **Default:** `false`
 
 Before generating the products, delete all files in the output directory.
@@ -164,6 +164,35 @@ module.exports = {
   //...
   output: {
     clean: true, // Clean the output directory before emit.
+  },
+
+  // or
+  output: {
+    clean: {
+      keep: 'ignored/dir', // keep these assets under 'dist/ignored/dir'.
+    },
+  },
+};
+```
+
+## output.compareBeforeEmit
+
+<ApiMeta addedVersion={'1.1.0'} />
+
+- **Type:** `boolean`
+- **Default:** `true`
+
+Tells Rspack to check if to be emitted file already exists and has the same content before writing to the output file system.
+
+:::warning
+Rspack will not write output file when file already exists on disk with the same content.
+:::
+
+```js title="rspack.config.js"
+module.exports = {
+  //...
+  output: {
+    compareBeforeEmit: false,
   },
 };
 ```
@@ -326,7 +355,7 @@ module.exports = {
 - **Type:** `('fetch-streaming' | 'fetch' | 'async-node' | string | false)[]`
 - **Default:** Determined by [`output.wasmLoading`](#outputwasmloading) and [`output.workerWasmLoading`](#workerWasmLoading)
 
-List of wasm loading types enabled for use by entry points.
+List of Wasm loading types enabled for use by entry points.
 
 ```js title="rspack.config.js"
 module.exports = {
@@ -355,6 +384,8 @@ module.exports = {
       const: true,
       // The environment supports destructuring ('{ a, b } = obj').
       destructuring: true,
+      // The environment supports 'document' variable.
+      document: true,
       // The environment supports an async import() function to import EcmaScript modules.
       dynamicImport: false,
       // The environment supports an async import() when creating a worker, only for web targets at the moment.
@@ -366,7 +397,7 @@ module.exports = {
       // The environment supports ECMAScript Module syntax to import ECMAScript modules (import ... from '...').
       module: false,
       // Determines if the node: prefix is generated for core module imports in environments that support it.
-      // This is only applicable to Webpack runtime code.
+      // This is only applicable to webpack runtime code.
       nodePrefixForCoreModules: false,
       // The environment supports optional chaining ('obj?.a' or 'obj?.()').
       optionalChaining: true,
@@ -467,59 +498,59 @@ Note this option is called filename but you are still allowed to use something l
 
 Note this option does not affect output files for on-demand-loaded chunks. It only affects output files that are initially loaded. For on-demand-loaded chunk files, the [`output.chunkFilename`](#outputchunkfilename) option is used. Files created by loaders also aren't affected. In this case, you would have to try the specific loader's available options.
 
-## Template String
+## Template string
 
 The template string below can be used to replace the corresponding file name. Different contexts correspond to different replaceable content, e.g. [output.assetModuleFilename](/config/output#outputassetmodulefilename) supports the use of [File Context](/config/output#file-context) and [Module Context](/config/output#module-context).
 
-### Compilation Context
+### Compilation context
 
 Content that can be replaced at the compilation level.
 
-| Template   | Description              |
-| ---------- | ------------------------ |
-| [fullhash] | full hash of compilation |
+| Template     | Description              |
+| ------------ | ------------------------ |
+| `[fullhash]` | full hash of compilation |
 
-### Chunk Context
+### Chunk context
 
 Content that can be replaced at the chunk level.
 
-| template      | description                                                                                                                                                                                                                               |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [id]          | The current chunk id                                                                                                                                                                                                                      |
-| [name]        | Use name when chunk name exists, otherwise use chunk id                                                                                                                                                                                   |
-| [chunkhash]   | The hash value of the chunk, computed from all elements of type in the current chunk                                                                                                                                                      |
-| [contenthash] | The hash value of the chunk, computed from the elements that contain only the content of that type. For example, if a module of type JavaScript is generated, only the hash of all JavaScript-typed modules in the current chunk is used. |
+| template        | description                                                                                                                                                                                                                               |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `[id]`          | The current chunk id                                                                                                                                                                                                                      |
+| `[name]`        | Use name when chunk name exists, otherwise use chunk id                                                                                                                                                                                   |
+| `[chunkhash]`   | The hash value of the chunk, computed from all elements of type in the current chunk                                                                                                                                                      |
+| `[contenthash]` | The hash value of the chunk, computed from the elements that contain only the content of that type. For example, if a module of type JavaScript is generated, only the hash of all JavaScript-typed modules in the current chunk is used. |
 
-### Module Context
+### Module context
 
 Content that can be replaced at the module level.
 
-| Template      | Description            |
-| ------------- | ---------------------- |
-| [id]          | The id of the module   |
-| [hash]        | The hash of the module |
-| [contenthash] | hash of module content |
+| Template        | Description            |
+| --------------- | ---------------------- |
+| `[id]`          | The id of the module   |
+| `[hash]`        | The hash of the module |
+| `[contenthash]` | hash of module content |
 
-### File Context
+### File context
 
 Content that can be replaced at the file level.
 
-| Template   | Description                                                                       |
-| ---------- | --------------------------------------------------------------------------------- |
-| [file]     | Filename and path, without query or fragment                                      |
-| [query]    | Query with leading `?`                                                            |
-| [fragment] | Fragment with leading `#`                                                         |
-| [base]     | Only filename (including extensions), without path                                |
-| [filebase] | Same, but deprecated                                                              |
-| [path]     | Only path, without filename                                                       |
-| [name]     | Only filename without extension or path                                           |
-| [ext]      | Extension with leading `.` (not available for [output.filename](#outputfilename)) |
+| Template     | Description                                                                       |
+| ------------ | --------------------------------------------------------------------------------- |
+| `[file]`     | Filename and path, without query or fragment                                      |
+| `[query]`    | Query with leading `?`                                                            |
+| `[fragment]` | Fragment with leading `#`                                                         |
+| `[base]`     | Only filename (including extensions), without path                                |
+| `[filebase]` | Same, but deprecated                                                              |
+| `[path]`     | Only path, without filename                                                       |
+| `[name]`     | Only filename without extension or path                                           |
+| `[ext]`      | Extension with leading `.` (not available for [output.filename](#outputfilename)) |
 
 Substitutions available on URL-level:
 
 | Template | Description |
 | -------- | ----------- |
-| [url]    | URL         |
+| `[url]`  | URL         |
 
 :::tip
 
@@ -527,7 +558,7 @@ Substitutions available on URL-level:
 
 :::
 
-The length of hashes (`[hash]`, `[contenthash]` or `[chunkhash]`) can be specified using `[hash:16]` (defaults to 20). Alternatively, specify [`output.hashDigestLength`](#outputhashdigestlength) to configure the length globally.
+The length of hashes (`[hash]`, `[contenthash]` or `[chunkhash]`) can be specified using `[hash:12]` (defaults to 16). Alternatively, specify [`output.hashDigestLength`](#outputhashdigestlength) to configure the length globally.
 
 It is possible to filter out placeholder replacement when you want to use one of the placeholders in the actual file name. For example, to output a file `[name].js`, you have to escape the `[name]` placeholder by adding backslashes between the brackets. So that `[\name\]` generates `[name]` instead of getting replaced with the `name` of the asset.
 
@@ -566,6 +597,12 @@ type ModulePathData = {
 };
 ```
 
+:::warning
+When developing locally, it's recommended to avoid using hash values in filenames.
+
+This is because entry files and chunks split by [`optimization.splitChunks`](/plugins/webpack/split-chunks-plugin) are loaded via `<script>` tags in HTML files. If filenames contain hash values, HMR will not work as HTML files cannot be dynamically loaded.
+:::
+
 ## output.globalObject
 
 - **Type:** `string`
@@ -599,18 +636,14 @@ The encoding to use when generating the hash. Using `'base64'` for filenames mig
 ## output.hashDigestLength
 
 - **Type:** `number`
-- **Default:** `20`
+- **Default:** `16`
 
 The prefix length of the hash digest to use.
-
-:::tip
-The default value for `hashDigestLength` is `20`. When the feature [`experiments.futureDefaults`](/config/experiments#experimentsfuturedefaults) is enabled, it will use `16` as the default value.
-:::
 
 ## output.hashFunction
 
 - **Type:** `'md4' | 'xxhash64'`
-- **Default:** `'md4'`
+- **Default:** `'xxhash64'`
 
 The hashing algorithm to use.
 
@@ -624,7 +657,7 @@ module.exports = {
 ```
 
 :::tip
-`hashFunction` supports `xxhash64` as a faster algorithm, which will be used as default when [`experiments.futureDefaults`](/config/experiments#experimentsfuturedefaults) is enabled.
+Rspack uses the faster `xxhash64` algorithm by default since v1.1.
 :::
 
 ## output.hashSalt
@@ -857,7 +890,7 @@ Configure how the library will be exposed.
 
 For the following examples, we'll use `_entry_return_` to indicate the values returned by the entry point.
 
-#### Expose a Variable
+#### Expose a variable
 
 These options assign the return value of the entry point (e.g. whatever the entry point exported) to the name provided by [`output.library.name`](#outputlibraryname) at whatever scope the bundle was included at.
 
@@ -938,7 +971,7 @@ export function hello(name) {
 MyLibrary.hello('World');
 ```
 
-#### Expose Via Object Assignment
+#### Expose via object assignment
 
 These options assign the return value of the entry point (e.g. whatever the entry point exported) to a specific object under the name defined by [`output.library.name`](#outputlibraryname).
 
@@ -1036,7 +1069,7 @@ require('MyLibrary').doSomething();
 Note that not setting a `output.library.name` will cause all properties returned by the entry point to be assigned to the given object; there are no checks against existing property names.
 :::
 
-#### Module Definition Systems
+#### Module definition systems
 
 These options will result in a bundle that comes with a complete header to ensure compatibility with various module systems. The `output.library.name` option will take on a different meaning under the following `output.library.type` options.
 
@@ -1057,7 +1090,7 @@ module.exports = {
 };
 ```
 
-Output ES Module.
+Output ES modules.
 
 However this feature is still experimental and not fully supported yet, so make sure to enable [`experiments.outputModule`](/config/experiments#experimentsoutputmodule) beforehand. In addition, you can track the development progress in [this thread](https://github.com/webpack/webpack/issues/2933#issuecomment-774253975).
 
@@ -1325,7 +1358,7 @@ System.register(
 );
 ```
 
-#### Other Types
+#### Other types
 
 **type: 'jsonp'**
 
@@ -1653,6 +1686,12 @@ module.exports = {
 };
 ```
 
+## output.strictModuleExceptionHandling
+
+- **Types:** boolean
+
+Tell Rspack to remove a module from the module instance cache (require.cache) if it throws an exception when it is required.
+
 ## output.trustedTypes
 
 - **Type:** `true | string | object`
@@ -1672,6 +1711,28 @@ module.exports = {
   output: {
     trustedTypes: {
       policyName: 'my-application#webpack',
+    },
+  },
+};
+```
+
+### output.trustedTypes.onPolicyCreationFailure
+
+<ApiMeta addedVersion={'1.1.6'} />
+
+- **Type:** `"stop" | "continue"`
+- **Default:** `"stop"`
+
+Determine whether to proceed with loading in anticipation that [`require-trusted-types-for 'script'`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/require-trusted-types-for) has not been enforced or to immediately fail when the call to `trustedTypes.createPolicy(...)` fails due to the policy name being absent from the CSP `trusted-types` list or being a duplicate.
+
+```js title="rspack.config.js"
+module.exports = {
+  //...
+  output: {
+    //...
+    trustedTypes: {
+      policyName: 'my-application#webpack',
+      onPolicyCreationFailure: 'continue',
     },
   },
 };

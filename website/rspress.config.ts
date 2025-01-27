@@ -8,7 +8,6 @@ import pluginSitemap from 'rspress-plugin-sitemap';
 import { defineConfig } from 'rspress/config';
 
 const PUBLISH_URL = 'https://rspack.dev';
-const COPYRIGHT = '© 2022-present ByteDance Inc. All Rights Reserved.';
 
 export default defineConfig({
   root: path.join(__dirname, 'docs'),
@@ -63,9 +62,6 @@ export default defineConfig({
     }),
   ],
   themeConfig: {
-    footer: {
-      message: COPYRIGHT,
-    },
     socialLinks: [
       {
         icon: 'github',
@@ -116,7 +112,8 @@ export default defineConfig({
   },
   builderConfig: {
     dev: {
-      lazyCompilation: true,
+      // TODO: @JSerFeng needs to fix this
+      // lazyCompilation: true,
     },
     plugins: [
       pluginGoogleAnalytics({ id: 'G-XKKCNZZNJD' }),
@@ -124,9 +121,8 @@ export default defineConfig({
         title: 'Rspack',
         type: 'website',
         url: PUBLISH_URL,
-        image:
-          'https://assets.rspack.dev/rspack/assets/rspack-og-image-v1-0.png',
-        description: 'Fast Rust-based Web Bundler',
+        image: 'https://assets.rspack.dev/rspack/rspack-og-image.png',
+        description: 'Fast Rust-based web bundler',
         twitter: {
           site: '@rspack_dev',
           card: 'summary_large_image',

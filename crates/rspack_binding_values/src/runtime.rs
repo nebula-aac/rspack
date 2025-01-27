@@ -1,11 +1,15 @@
 use std::sync::LazyLock;
 
+use cow_utils::CowUtils;
 use heck::{ToLowerCamelCase, ToSnakeCase};
 use napi_derive::napi;
 use rspack_core::RuntimeGlobals;
+use rspack_plugin_runtime::{
+  CreateScriptData, LinkPrefetchData, LinkPreloadData, RuntimeModuleChunkWrapper,
+};
 use rustc_hash::FxHashMap;
 
-use crate::JsChunk;
+use crate::JsChunkWrapper;
 
 static RUNTIME_GLOBAL_MAP: LazyLock<(
   FxHashMap<RuntimeGlobals, String>,
@@ -70,7 +74,7 @@ static RUNTIME_GLOBAL_MAP: LazyLock<(
   declare_runtime_global!(COMPAT_GET_DEFAULT_EXPORT);
   declare_runtime_global!(CREATE_FAKE_NAMESPACE_OBJECT);
   declare_runtime_global!(NODE_MODULE_DECORATOR);
-  declare_runtime_global!(HARMONY_MODULE_DECORATOR);
+  declare_runtime_global!(ESM_MODULE_DECORATOR);
   declare_runtime_global!(SYSTEM_CONTEXT);
   declare_runtime_global!(THIS_AS_EXPORTS);
   declare_runtime_global!(CURRENT_REMOTE_GET_SCOPE);
@@ -90,9 +94,10 @@ static RUNTIME_GLOBAL_MAP: LazyLock<(
   (to_js_map, from_js_map)
 });
 
-#[napi(object)]
+#[napi(object, object_from_js = false)]
 pub struct JsAdditionalTreeRuntimeRequirementsArg {
-  pub chunk: JsChunk,
+  #[napi(ts_type = "JsChunk")]
+  pub chunk: JsChunkWrapper,
   pub runtime_requirements: JsRuntimeGlobals,
 }
 
@@ -129,13 +134,104 @@ impl JsAdditionalTreeRuntimeRequirementsResult {
     let mut runtime_requirements = RuntimeGlobals::default();
 
     for item in self.runtime_requirements.value.iter() {
-      let name = item.to_snake_case().to_uppercase();
+      let snake_case = item.to_snake_case();
+      let name = snake_case.cow_to_uppercase();
 
-      if let Some(item) = RUNTIME_GLOBAL_MAP.1.get(&name) {
+      if let Some(item) = RUNTIME_GLOBAL_MAP.1.get(name.as_ref()) {
         runtime_requirements.extend(*item);
       }
     }
 
     runtime_requirements
+  }
+}
+
+#[napi(object, object_from_js = false)]
+pub struct JsRuntimeRequirementInTreeArg {
+  #[napi(ts_type = "JsChunk")]
+  pub chunk: JsChunkWrapper,
+  pub runtime_requirements: JsRuntimeGlobals,
+}
+
+#[derive(Debug)]
+#[napi(object)]
+pub struct JsRuntimeRequirementInTreeResult {
+  pub runtime_requirements: JsRuntimeGlobals,
+}
+
+impl JsRuntimeRequirementInTreeResult {
+  pub fn as_runtime_globals(&self) -> RuntimeGlobals {
+    let mut runtime_requirements = RuntimeGlobals::default();
+
+    for item in self.runtime_requirements.value.iter() {
+      let snake_name = item.to_snake_case();
+
+      if let Some(item) = RUNTIME_GLOBAL_MAP
+        .1
+        .get(snake_name.cow_to_uppercase().as_ref())
+      {
+        runtime_requirements.extend(*item);
+      }
+    }
+
+    runtime_requirements
+  }
+}
+
+#[napi(object, object_from_js = false)]
+pub struct JsCreateScriptData {
+  pub code: String,
+  #[napi(ts_type = "JsChunk")]
+  pub chunk: JsChunkWrapper,
+}
+
+impl From<CreateScriptData> for JsCreateScriptData {
+  fn from(value: CreateScriptData) -> Self {
+    Self {
+      code: value.code,
+      chunk: value.chunk.into(),
+    }
+  }
+}
+
+#[napi(object, object_from_js = false)]
+pub struct JsLinkPreloadData {
+  pub code: String,
+  #[napi(ts_type = "JsChunk")]
+  pub chunk: JsChunkWrapper,
+}
+
+impl From<LinkPreloadData> for JsLinkPreloadData {
+  fn from(value: LinkPreloadData) -> Self {
+    Self {
+      code: value.code,
+      chunk: value.chunk.into(),
+    }
+  }
+}
+
+#[napi(object, object_from_js = false)]
+pub struct JsLinkPrefetchData {
+  pub code: String,
+  #[napi(ts_type = "JsChunk")]
+  pub chunk: JsChunkWrapper,
+}
+
+impl From<LinkPrefetchData> for JsLinkPrefetchData {
+  fn from(value: LinkPrefetchData) -> Self {
+    Self {
+      code: value.code,
+      chunk: value.chunk.into(),
+    }
+  }
+}
+
+impl From<RuntimeModuleChunkWrapper> for JsChunkWrapper {
+  fn from(value: RuntimeModuleChunkWrapper) -> Self {
+    Self {
+      chunk_ukey: value.chunk_ukey,
+      compilation_id: value.compilation_id,
+      compilation: value.compilation,
+    }
   }
 }

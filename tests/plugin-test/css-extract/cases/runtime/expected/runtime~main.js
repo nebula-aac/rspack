@@ -94,6 +94,17 @@ __webpack_require__.e = function (chunkId) {
         };
       
 })();
+// webpack/runtime/get mini-css chunk filename
+(() => {
+// This function allow to reference chunks
+        __webpack_require__.miniCssF = function (chunkId) {
+          // return url for filenames not based on template
+          
+          // return url for filenames based on template
+          return "" + chunkId + ".css";
+        };
+      
+})();
 // webpack/runtime/global
 (() => {
 __webpack_require__.g = (function () {
@@ -137,8 +148,9 @@ __webpack_require__.l = function (url, done, key, chunkId) {
 	}
 	if (!script) {
 		needAttach = true;
-		script = document.createElement('script');
 		
+    script = document.createElement('script');
+    
 		script.charset = 'utf-8';
 		script.timeout = 120;
 		if (__webpack_require__.nc) {
@@ -147,8 +159,8 @@ __webpack_require__.l = function (url, done, key, chunkId) {
 		
 		
 		script.src = url;
-
 		
+    
 	}
 	inProgress[url] = [done];
 	var onScriptComplete = function (prev, event) {

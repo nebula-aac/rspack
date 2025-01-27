@@ -4,10 +4,12 @@ use std::hash::Hasher;
 use std::sync::Arc;
 use std::sync::LazyLock;
 
+use cow_utils::CowUtils;
 use heck::{ToKebabCase, ToLowerCamelCase};
 use indexmap::{IndexMap, IndexSet};
 use regex::{Captures, Regex};
-use rspack_core::rspack_sources::{ConcatSource, RawSource};
+use rspack_core::rspack_sources::{ConcatSource, RawStringSource};
+use rspack_core::ChunkGraph;
 use rspack_core::{
   to_identifier, Compilation, CompilerOptions, GenerateContext, PathData, ResourceData,
   RuntimeGlobals,
@@ -25,12 +27,8 @@ use rustc_hash::FxHashSet as HashSet;
 use crate::parser_and_generator::CssExport;
 
 pub const AUTO_PUBLIC_PATH_PLACEHOLDER: &str = "__RSPACK_PLUGIN_CSS_AUTO_PUBLIC_PATH__";
-pub static AUTO_PUBLIC_PATH_PLACEHOLDER_REGEX: LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(AUTO_PUBLIC_PATH_PLACEHOLDER).expect("Invalid regexp"));
 pub static LEADING_DIGIT_REGEX: LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r"^\d+").expect("Invalid regexp"));
-pub static PREFIX_UNDERSCORE_REGEX: LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r"^[0-9_-]").expect("Invalid regexp"));
+  LazyLock::new(|| Regex::new(r"^((-?[0-9])|--)").expect("Invalid regexp"));
 
 #[derive(Debug, Clone)]
 pub struct LocalIdentOptions<'a> {
@@ -69,7 +67,7 @@ impl<'a> LocalIdentOptions<'a> {
       }
       let hash = hasher.digest(&output.hash_digest);
       LEADING_DIGIT_REGEX
-        .replace_all(hash.rendered(output.hash_digest_length), "")
+        .replace(hash.rendered(output.hash_digest_length), "_${1}")
         .into_owned()
     };
     LocalIdentNameRenderOptions {
@@ -101,29 +99,25 @@ struct LocalIdentNameRenderOptions<'a> {
 
 impl LocalIdentNameRenderOptions<'_> {
   pub fn render_local_ident_name(self, local_ident_name: &LocalIdentName) -> String {
-    let mut s = local_ident_name
+    let raw = local_ident_name
       .template
       .render(self.path_data, None)
       .always_ok();
-    s = s.replace("[uniqueName]", self.unique_name);
-    s = s.replace("[local]", self.local);
-    s
+    let s: &str = raw.as_ref();
+
+    s.cow_replace("[uniqueName]", self.unique_name)
+      .cow_replace("[local]", self.local)
+      .into_owned()
   }
 }
 
 static UNESCAPE_CSS_IDENT_REGEX: LazyLock<Regex> =
   LazyLock::new(|| Regex::new(r"([^a-zA-Z0-9_\u0081-\uffff-])").expect("invalid regex"));
 
-pub fn escape_css(s: &str, omit_optional_underscore: bool) -> Cow<str> {
+pub fn escape_css(s: &str) -> Cow<str> {
   let escaped = UNESCAPE_CSS_IDENT_REGEX.replace_all(s, |s: &Captures| format!("\\{}", &s[0]));
-  if !omit_optional_underscore
-    && !escaped.starts_with("--")
-    && PREFIX_UNDERSCORE_REGEX.is_match(&escaped)
-  {
-    format!("_{}", escaped).into()
-  } else {
-    escaped
-  }
+
+  escaped
 }
 
 pub(crate) fn export_locals_convention(
@@ -143,6 +137,7 @@ pub(crate) fn export_locals_convention(
   res
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn css_modules_exports_to_string<'a>(
   exports: IndexMap<&'a str, &'a IndexSet<CssExport>>,
   module: &dyn rspack_core::Module,
@@ -151,14 +146,45 @@ pub fn css_modules_exports_to_string<'a>(
   ns_obj: &str,
   left: &str,
   right: &str,
+  with_hmr: bool,
 ) -> Result<String> {
-  let mut code = format!("{}{}module.exports = {{\n", ns_obj, left);
+  let (decl_name, exports_string) =
+    stringified_exports(exports, compilation, runtime_requirements, module)?;
+
+  let hmr_code = if with_hmr {
+    Cow::Owned(format!(
+      "// only invalidate when locals change
+var stringified_exports = JSON.stringify({decl_name});
+if (module.hot.data && module.hot.data.exports && module.hot.data.exports != stringified_exports) {{
+  module.hot.invalidate();
+}} else {{
+  module.hot.accept(); 
+}}
+module.hot.dispose(function(data) {{ data.exports = stringified_exports; }});"
+    ))
+  } else {
+    Cow::Borrowed("")
+  };
+  let mut code =
+    format!("{exports_string}\n{hmr_code}\n{ns_obj}{left}module.exports = {decl_name}",);
+  code += right;
+  code += ";\n";
+  Ok(code)
+}
+
+pub fn stringified_exports<'a>(
+  exports: IndexMap<&'a str, &'a IndexSet<CssExport>>,
+  compilation: &Compilation,
+  runtime_requirements: &mut RuntimeGlobals,
+  module: &dyn rspack_core::Module,
+) -> Result<(&'static str, String)> {
+  let mut stringified_exports = String::new();
   let module_graph = compilation.get_module_graph();
   for (key, elements) in exports {
     let content = elements
       .iter()
       .map(|CssExport { ident, from, id: _ }| match from {
-        None => json_stringify(&unescape(ident)),
+        None => json_stringify(&ident),
         Some(from_name) => {
           let from = module
             .get_dependencies()
@@ -181,7 +207,11 @@ pub fn css_modules_exports_to_string<'a>(
             })
             .expect("should have css from module");
 
-          let from = serde_json::to_string(from.id(&compilation.chunk_graph)).expect("TODO:");
+          let from = serde_json::to_string(
+            ChunkGraph::get_module_id(&compilation.module_ids_artifact, from.module_identifier)
+              .expect("should have module"),
+          )
+          .expect("should json stringify module id");
           runtime_requirements.insert(RuntimeGlobals::REQUIRE);
           format!(
             "{}({from})[{}]",
@@ -192,13 +222,20 @@ pub fn css_modules_exports_to_string<'a>(
       })
       .collect::<Vec<_>>()
       .join(" + \" \" + ");
-    writeln!(code, "  {}: {},", json_stringify(&unescape(key)), content)
-      .map_err(|e| error!(e.to_string()))?;
+    writeln!(
+      stringified_exports,
+      "  {}: {},",
+      json_stringify(&key),
+      content
+    )
+    .map_err(|e| error!(e.to_string()))?;
   }
-  code += "}";
-  code += right;
-  code += ";\n";
-  Ok(code)
+
+  let decl_name = "exports";
+  Ok((
+    decl_name,
+    format!("var {} = {{\n{}}};", decl_name, stringified_exports),
+  ))
 }
 
 pub fn css_modules_exports_to_concatenate_module_string<'a>(
@@ -221,7 +258,7 @@ pub fn css_modules_exports_to_concatenate_module_string<'a>(
     let content = elements
       .iter()
       .map(|CssExport { ident, from, id: _ }| match from {
-        None => json_stringify(&unescape(ident)),
+        None => json_stringify(&ident),
         Some(from_name) => {
           let from = module
             .get_dependencies()
@@ -244,11 +281,15 @@ pub fn css_modules_exports_to_concatenate_module_string<'a>(
             })
             .expect("should have css from module");
 
-          let from = serde_json::to_string(from.id(&compilation.chunk_graph)).expect("TODO:");
+          let from = serde_json::to_string(
+            ChunkGraph::get_module_id(&compilation.module_ids_artifact, from.module_identifier)
+              .expect("should have module"),
+          )
+          .expect("should json stringify module id");
           format!(
             "{}({from})[{}]",
             RuntimeGlobals::REQUIRE,
-            json_stringify(&unescape(ident))
+            json_stringify(&ident)
           )
         }
       })
@@ -257,13 +298,15 @@ pub fn css_modules_exports_to_concatenate_module_string<'a>(
     let mut identifier = to_identifier(key);
     let mut i = 0;
     while used_identifiers.contains(&identifier) {
-      identifier = Cow::Owned(format!("{key}{}", itoa!(i)));
+      identifier = Cow::Owned(format!("{identifier}{}", itoa!(i)));
       i += 1;
     }
     // TODO: conditional support `const or var` after we finished runtimeTemplate utils
-    concate_source.add(RawSource::from(format!("var {identifier} = {content};\n")));
+    concate_source.add(RawStringSource::from(format!(
+      "var {identifier} = {content};\n"
+    )));
     used_identifiers.insert(identifier.clone());
-    scope.register_export(unescape(key).as_ref().into(), identifier.into_owned());
+    scope.register_export(key.into(), identifier.into_owned());
   }
   Ok(())
 }
@@ -279,6 +322,7 @@ static UNESCAPE: LazyLock<Regex> =
 
 static DATA: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(?i)data:").expect("Invalid RegExp"));
 
+// `\/foo` in css should be treated as `foo` in js
 pub fn unescape(s: &str) -> Cow<str> {
   UNESCAPE.replace_all(s.as_ref(), |caps: &Captures| {
     caps

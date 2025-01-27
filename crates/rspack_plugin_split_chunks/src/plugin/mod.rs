@@ -49,7 +49,7 @@ impl SplitChunksPlugin {
     tracing::trace!("prepared module_group_map {:#?}", module_group_map);
     logger.time_end(start);
 
-    let start = logger.time("ensure min size fit");
+    let start: rspack_core::StartTime = logger.time("ensure min size fit");
     self.ensure_min_size_fit(compilation, &mut module_group_map);
     logger.time_end(start);
 
@@ -63,10 +63,10 @@ impl SplitChunksPlugin {
         module_group_key,
         module_group_map.len(),
       );
-      let process_span = tracing::trace_span!("Process ModuleGroup({})", module_group_key);
+      // let process_span = tracing::trace_span!("Process ModuleGroup");
 
-      process_span.in_scope(|| {
-        let cache_group = module_group.get_cache_group(&self.cache_groups);
+      // process_span.in_scope(|| {
+      let cache_group = module_group.get_cache_group(&self.cache_groups);
 
       let mut is_reuse_existing_chunk = false;
       let mut is_reuse_existing_chunk_with_all_modules = false;
@@ -78,19 +78,17 @@ impl SplitChunksPlugin {
       );
 
       let new_chunk_mut = compilation.chunk_by_ukey.expect_get_mut(&new_chunk);
-      tracing::trace!("{module_group_key}, get Chunk {:?} with is_reuse_existing_chunk: {is_reuse_existing_chunk:?} and {is_reuse_existing_chunk_with_all_modules:?}", new_chunk_mut.chunk_reason);
+      tracing::trace!("{module_group_key}, get Chunk {:?} with is_reuse_existing_chunk: {is_reuse_existing_chunk:?} and {is_reuse_existing_chunk_with_all_modules:?}", new_chunk_mut.chunk_reason());
 
-      if let Some(chunk_reason) = &mut new_chunk_mut.chunk_reason {
+      if let Some(chunk_reason) = new_chunk_mut.chunk_reason_mut() {
         chunk_reason.push_str(&format!(" (cache group: {})", cache_group.key.as_str()))
       }
 
       if let Some(filename) = &cache_group.filename {
-        new_chunk_mut.filename_template = Some(filename.clone());
+        new_chunk_mut.set_filename_template(Some(filename.clone()));
       }
 
-      new_chunk_mut
-        .id_name_hints
-        .insert(cache_group.id_hint.clone());
+      new_chunk_mut.add_id_name_hints(cache_group.id_hint.clone());
 
       if is_reuse_existing_chunk {
         // The chunk is not new but created in code splitting. We need remove `new_chunk` since we would remove
@@ -113,7 +111,8 @@ impl SplitChunksPlugin {
         if used_chunks_len < cache_group.min_chunks as usize {
           // `min_size` is not satisfied, ignore this invalid `ModuleGroup`
           tracing::trace!("ModuleGroup({module_group_key}) is skipped. Reason: used_chunks_len({used_chunks_len:?}) < cache_group.min_chunks({:?})", cache_group.min_chunks);
-          return;
+          continue;
+          // return;
         }
       }
 
@@ -144,7 +143,7 @@ impl SplitChunksPlugin {
         &used_chunks,
         compilation,
       );
-      })
+      // })
     }
     logger.time_end(start);
 
@@ -163,7 +162,7 @@ impl Debug for SplitChunksPlugin {
 }
 
 #[plugin_hook(CompilationOptimizeChunks for SplitChunksPlugin, stage = Compilation::OPTIMIZE_CHUNKS_STAGE_ADVANCED)]
-fn optimize_chunks(&self, compilation: &mut Compilation) -> Result<Option<bool>> {
+pub fn optimize_chunks(&self, compilation: &mut Compilation) -> Result<Option<bool>> {
   self.inner_impl(compilation)?;
   Ok(None)
 }
@@ -176,7 +175,7 @@ impl Plugin for SplitChunksPlugin {
   fn apply(
     &self,
     ctx: rspack_core::PluginContext<&mut rspack_core::ApplyContext>,
-    _options: &mut rspack_core::CompilerOptions,
+    _options: &rspack_core::CompilerOptions,
   ) -> Result<()> {
     ctx
       .context

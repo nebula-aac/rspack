@@ -19,10 +19,12 @@ import { Badge } from '@theme';
 启动一次编译流程，编译流程完成或因错误中止时触发回调。
 
 ```ts
-run(callback:  (
-  error: Error, // 仅包含构建器相关错误，如配置错误等，不包含编译错误
-  stats: Stats, // 编译过程中产生的信息
-) => void): void;
+function run(
+  callback: (
+    error: Error, // 仅包含构建器相关错误，如配置错误等，不包含编译错误
+    stats: Stats, // 编译过程中产生的信息
+  ) => void,
+): void;
 ```
 
 :::warning
@@ -121,9 +123,9 @@ Watching 对象提供如下方法：
 创建 Compilation 并执行编译流程，是 `compiler.run` 和 `compiler.watch` 依赖的底层方法。
 
 ```ts
-compile(
-  callback: (compilation: Compilation) => void // 编译流程完成后回调
-): void
+function compile(
+  callback: (compilation: Compilation) => void, // 编译流程完成后回调
+): void;
 ```
 
 <Collapse>
@@ -141,8 +143,8 @@ compile(
 关闭当前构建器，在此期间处理低优先级任务，如缓存等。
 
 ```ts
-close(
-  callback: (err: Error) => void // 关闭完成后回调
+function close(
+  callback: (err: Error) => void, // 关闭完成后回调
 ): void;
 ```
 
@@ -151,7 +153,7 @@ close(
 创建一个不与 Compilation 关联的全局[日志对象](/api/javascript-api/logger)，用于打印全局信息。
 
 ```ts
-getInfrastructureLogger(name: string): Logger;
+function getInfrastructureLogger(name: string): Logger;
 ```
 
 <Collapse>
@@ -169,7 +171,7 @@ getInfrastructureLogger(name: string): Logger;
 创建一个缓存对象，以在构建流程中共享数据。
 
 ```ts
-getCache(name: string): CacheFacade;
+function getCache(name: string): CacheFacade;
 ```
 
 <Collapse>
@@ -183,7 +185,7 @@ getCache(name: string): CacheFacade;
 停止对文件系统的读取循环，它内部包含定时器，可能会导致 `compiler.close` 后进程依然无法退出。
 
 ```ts
-purgeInputFileSystem(): void;
+function purgeInputFileSystem(): void;
 ```
 
 ### createChildCompiler
@@ -191,12 +193,12 @@ purgeInputFileSystem(): void;
 允许在 Rspack 中运行另一个 Rspack 实例。但是，子编译器会应用不同的设置和配置。他会从父 Compiler（或者顶级 Compiler）中复制所有的钩子（hook）和插件（plugin），并且创建一个子 Compiler 实例。 返回值为创建好的 Compiler 实例。
 
 ```ts
-createChildCompiler(
+function createChildCompiler(
   compilation: Compilation,
   compilerName: string,
   compilerIndex: number,
   outputOptions: OutputOptions,
-  plugins: RspackPlugin[]
+  plugins: RspackPlugin[],
 ): Compiler;
 ```
 
@@ -233,7 +235,7 @@ createChildCompiler(
 启动子 Compiler 的构建流程，会进行一次完整的构建流程并生成产物。
 
 ```ts
-runAsChild(
+function runAsChild(
   callback(
     err: Error, // 子 Compiler 执行的构建器错误
     entries: Chunk[], // 子 Compiler 执行产生的 Chunk 信息
@@ -260,7 +262,7 @@ runAsChild(
 当前是否为子 Compiler。
 
 ```ts
-isChild(): boolean;
+function isChild(): boolean;
 ```
 
 ## Compiler 对象属性
@@ -269,15 +271,34 @@ isChild(): boolean;
 
 详见 [Compiler 钩子](/api/plugin-api/compiler-hooks)
 
-### rspack/webpack
+### rspack
 
-**类型：** `typeof rspack`
+- **类型：** `typeof rspack`
 
-获取当前的 `@rspack/core` 的导出，以此来获取关联的内部对象。这通常在 Rspack 被封装或者存在多个 Rspack 实例时很有用。
+获取当前的 `@rspack/core` 的导出，以此来获取关联的内部对象。当你无法直接引用 `@rspack/core`，或者存在多个 Rspack 实例时很有用。
+
+一个常见的例子是在 Rspack 插件中获取 [sources](/api/javascript-api/index#sources-对象) 对象：
+
+```js
+const { RawSource } = compiler.rspack.sources;
+const source = new RawSource('console.log("Hello, world!");');
+```
+
+### webpack
+
+- **类型：** `typeof rspack`
+
+等同于 `compiler.rspack`，该属性用于兼容 webpack 插件。
+
+如果你开发的 Rspack 插件需要兼容 webpack，可以使用该属性代替 `compiler.rspack`。
+
+```js
+console.log(compiler.webpack === compiler.rspack); // true
+```
 
 ### name
 
-**类型：** `string`
+- **类型：** `string`
 
 获取名称：
 
@@ -294,37 +315,37 @@ isChild(): boolean;
 
 ### root
 
-**类型：** `Compiler`
+- **类型：** `Compiler`
 
 获取根 Compiler 实例。
 
 ### options
 
-**类型：** `RspackOptionsNormalized`
+- **类型：** `RspackOptionsNormalized`
 
 获取根 Compiler 所使用的完整[构建配置](/config/index)。
 
 ### watchMode
 
-**类型：** `boolean`
+- **类型：** `boolean`
 
 是否通过 watch 启动。
 
 ### watching
 
-**类型：** `Watching`
+- **类型：** `Watching`
 
 获取 watch 启动下的监听控制对象，详见 [watch 方法](#watch)
 
 ### running
 
-**类型：** `boolean`
+- **类型：** `boolean`
 
 当前是否正在执行构建流程。
 
 ### inputFileSystem
 
-**类型：** `InputFileSystem`
+- **类型：** `InputFileSystem`
 
 获取用于从文件系统读取的代理对象，其内部有缓存等优化，以降低对同一文件的重复读取。
 
@@ -340,7 +361,7 @@ isChild(): boolean;
 
 ### outputFileSystem
 
-**类型：** `OutputFileSystem`
+- **类型：** `OutputFileSystem`
 
 获取用于输出到文件系统的代理对象，默认使用 `fs`。
 
@@ -356,7 +377,7 @@ isChild(): boolean;
 
 ### watchFileSystem
 
-**类型：** `WatchFileSystem`
+- **类型：** `WatchFileSystem`
 
 获取用于持续监听文件/目录变化的代理对象，提供一个 `watch` 方法来启动监听，并在回调中传入变更和移除的项目。
 
@@ -375,7 +396,7 @@ isChild(): boolean;
 `MultiCompiler` 可以让 Rspack 同时执行多份配置。如果传给 Rspack 的 JavaScript API 的配置为多个配置对象构成的数组，Rspack 会创建多个 compiler 实例，并且在所有 compiler 执行完毕后调用回调方法。
 
 ```js
-const rspack = require('@rspack/core');
+const { rspack } = require('@rspack/core');
 
 rspack(
   [
@@ -491,7 +512,7 @@ getInfrastructureLogger(name: string): Logger;
 
 #### compilers
 
-**类型：** `Compiler[]`
+- **类型：** `Compiler[]`
 
 获取包含的所有 Compiler 实例。
 
@@ -509,7 +530,7 @@ getInfrastructureLogger(name: string): Logger;
 
 <Badge text="只读" type="info" />
 
-**类型：** `RspackOptionsNormalized[]`
+- **类型：** `RspackOptionsNormalized[]`
 
 获取各个 Compiler 所使用的完整[构建配置](/config/index)。
 
@@ -517,7 +538,7 @@ getInfrastructureLogger(name: string): Logger;
 
 <Badge text="只写" type="info" />
 
-**类型：** `InputFileSystem`
+- **类型：** `InputFileSystem`
 
 为各个 Compiler 设置用于从文件系统读取的代理对象。
 
@@ -535,7 +556,7 @@ getInfrastructureLogger(name: string): Logger;
 
 <Badge text="只写" type="info" />
 
-**类型：** `OutputFileSystem`
+- **类型：** `OutputFileSystem`
 
 为各个 Compiler 设置用于输出到文件系统的代理对象。
 
@@ -553,7 +574,7 @@ getInfrastructureLogger(name: string): Logger;
 
 <Badge text="只写" type="info" />
 
-**类型：** `WatchFileSystem`
+- **类型：** `WatchFileSystem`
 
 为各个 Compiler 设置用于持续监听文件/目录变化的代理对象。
 
@@ -569,6 +590,6 @@ getInfrastructureLogger(name: string): Logger;
 
 #### running
 
-**类型：** `boolean`
+- **类型：** `boolean`
 
 当前是否正在执行构建流程。

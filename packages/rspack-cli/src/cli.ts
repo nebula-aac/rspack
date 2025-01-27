@@ -12,10 +12,9 @@ import {
 	rspack
 } from "@rspack/core";
 import * as rspackCore from "@rspack/core";
-import semver from "semver";
+import { createColors, isColorSupported } from "colorette";
 import yargs from "yargs";
 import { hideBin } from "yargs/helpers";
-
 import { BuildCommand } from "./commands/build";
 import { PreviewCommand } from "./commands/preview";
 import { ServeCommand } from "./commands/serve";
@@ -60,7 +59,7 @@ export class RspackCLI {
 			? (config as MultiRspackOptions).some(i => i.watch)
 			: (config as RspackOptions).watch;
 
-		let compiler;
+		let compiler: MultiCompiler | Compiler | null;
 		try {
 			compiler = rspack(config, isWatch ? callback : undefined);
 		} catch (e) {
@@ -70,7 +69,11 @@ export class RspackCLI {
 				this.getLogger().error(e.message);
 				process.exit(2);
 			} else if (e instanceof Error) {
-				callback?.(e);
+				if (typeof callback === "function") {
+					callback(e);
+				} else {
+					this.getLogger().error(e);
+				}
 				return null;
 			}
 			throw e;
@@ -78,16 +81,7 @@ export class RspackCLI {
 		return compiler;
 	}
 	createColors(useColor?: boolean): RspackCLIColors {
-		const { createColors, isColorSupported } = require("colorette");
-
-		let shouldUseColor;
-
-		if (useColor) {
-			shouldUseColor = useColor;
-		} else {
-			shouldUseColor = isColorSupported;
-		}
-
+		const shouldUseColor = useColor || isColorSupported;
 		return {
 			...createColors({ useColor: shouldUseColor }),
 			isColorSupported: shouldUseColor
@@ -105,12 +99,6 @@ export class RspackCLI {
 		};
 	}
 	async run(argv: string[]) {
-		if (semver.lt(semver.clean(process.version)!, "14.0.0")) {
-			this.getLogger().warn(
-				`Minimum recommended Node.js version is 14.0.0, current version is ${process.version}`
-			);
-		}
-
 		this.program.showHelpOnFail(false);
 		this.program.usage("[options]");
 		this.program.scriptName("rspack");
@@ -232,6 +220,17 @@ export class RspackCLI {
 		let loadedConfig = (await loadRspackConfig(
 			options
 		)) as NonNullable<LoadedRspackConfig>;
+
+		if (typeof loadedConfig === "function") {
+			loadedConfig = loadedConfig(options.argv?.env, options.argv);
+			// if return promise we should await its result
+			if (
+				typeof (loadedConfig as unknown as Promise<unknown>).then === "function"
+			) {
+				loadedConfig = await loadedConfig;
+			}
+		}
+
 		if (options.configName) {
 			const notFoundConfigNames: string[] = [];
 
@@ -269,15 +268,6 @@ export class RspackCLI {
 			}
 		}
 
-		if (typeof loadedConfig === "function") {
-			loadedConfig = loadedConfig(options.argv?.env, options.argv);
-			// if return promise we should await its result
-			if (
-				typeof (loadedConfig as unknown as Promise<unknown>).then === "function"
-			) {
-				loadedConfig = await loadedConfig;
-			}
-		}
 		return loadedConfig;
 	}
 

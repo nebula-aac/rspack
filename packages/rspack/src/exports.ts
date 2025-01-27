@@ -27,7 +27,7 @@ export { RspackOptionsApply, RspackOptionsApply as WebpackOptionsApply };
 
 export type { Chunk } from "./Chunk";
 export type { ChunkGroup } from "./ChunkGroup";
-export type { Module } from "./Module";
+export type { Module, ResolveData } from "./Module";
 export { MultiStats } from "./MultiStats";
 export { NormalModule } from "./NormalModule";
 export type { NormalModuleFactory } from "./NormalModuleFactory";
@@ -40,6 +40,7 @@ export type {
 	StatsModule
 } from "./Stats";
 export { Stats } from "./Stats";
+export { RuntimeModule } from "./RuntimeModule";
 
 // API extractor not working with some re-exports, see: https://github.com/microsoft/fluentui/issues/20694
 import * as ModuleFilenameHelpers from "./lib/ModuleFilenameHelpers";
@@ -84,7 +85,7 @@ import { createHash } from "./util/createHash";
 export const util = { createHash, cleverMerge };
 
 export { default as EntryOptionPlugin } from "./lib/EntryOptionPlugin";
-export { type OutputFileSystem } from "./util/fs";
+export type { OutputFileSystem } from "./util/fs";
 
 ///// Internal Plugins /////
 export type { BannerPluginArgument } from "./builtin-plugin";
@@ -102,6 +103,16 @@ export { DynamicEntryPlugin } from "./builtin-plugin";
 export { ExternalsPlugin } from "./builtin-plugin";
 export { HotModuleReplacementPlugin } from "./builtin-plugin";
 export { NoEmitOnErrorsPlugin } from "./builtin-plugin";
+export { WarnCaseSensitiveModulesPlugin } from "./builtin-plugin";
+export { RuntimePlugin } from "./builtin-plugin";
+export { DllPlugin, type DllPluginOptions } from "./lib/DllPlugin";
+export {
+	DllReferencePlugin,
+	type DllReferencePluginOptions,
+	type DllReferencePluginOptionsSourceType,
+	type DllReferencePluginOptionsContent,
+	type DllReferencePluginOptionsManifest
+} from "./lib/DllReferencePlugin";
 export { EnvironmentPlugin } from "./lib/EnvironmentPlugin";
 export { LoaderOptionsPlugin } from "./lib/LoaderOptionsPlugin";
 export { LoaderTargetPlugin } from "./lib/LoaderTargetPlugin";
@@ -169,6 +180,8 @@ export const webworker: Webworker = { WebWorkerTemplatePlugin };
 import { LimitChunkCountPlugin } from "./builtin-plugin";
 import { RuntimeChunkPlugin } from "./builtin-plugin";
 import { SplitChunksPlugin } from "./builtin-plugin";
+import { RemoveDuplicateModulesPlugin } from "./builtin-plugin";
+
 interface Optimize {
 	LimitChunkCountPlugin: typeof LimitChunkCountPlugin;
 	RuntimeChunkPlugin: typeof RuntimeChunkPlugin;
@@ -258,6 +271,7 @@ export { SourceMapDevToolPlugin } from "./builtin-plugin";
 export { EvalSourceMapDevToolPlugin } from "./builtin-plugin";
 export { EvalDevToolModulePlugin } from "./builtin-plugin";
 export { CssExtractRspackPlugin } from "./builtin-plugin";
+export { ContextReplacementPlugin } from "./builtin-plugin";
 
 ///// Rspack Postfixed Internal Loaders /////
 export type {
@@ -271,23 +285,50 @@ export type {
 	SwcLoaderTsParserConfig
 } from "./builtin-loader/swc/index";
 
-export {
-	type LoaderOptions as LightningcssLoaderOptions,
-	type FeatureOptions as LightningcssFeatureOptions
+export type {
+	LoaderOptions as LightningcssLoaderOptions,
+	FeatureOptions as LightningcssFeatureOptions
 } from "./builtin-loader/lightningcss/index";
 
 ///// Experiments Stuff /////
 import { cleanupGlobalTrace, registerGlobalTrace } from "@rspack/binding";
 interface Experiments {
 	globalTrace: {
-		register: typeof registerGlobalTrace;
-		cleanup: typeof cleanupGlobalTrace;
+		register: (
+			filter: string,
+			layer: "chrome" | "logger" | "otel",
+			output: string
+		) => Promise<void>;
+		cleanup: () => Promise<void>;
 	};
+	RemoveDuplicateModulesPlugin: typeof RemoveDuplicateModulesPlugin;
 }
 
 export const experiments: Experiments = {
 	globalTrace: {
-		register: registerGlobalTrace,
-		cleanup: cleanupGlobalTrace
-	}
+		async register(filter, layer, output) {
+			registerGlobalTrace(filter, layer, output);
+			if (layer === "otel") {
+				try {
+					const { initOpenTelemetry } = await import("@rspack/tracing");
+					await initOpenTelemetry();
+				} catch (error) {
+					console.error(
+						"Failed to import `@rspack/tracing` package. Please install `@rspack/tracing` to enable OpenTelemetry tracing.",
+						error
+					);
+				}
+			}
+		},
+		async cleanup() {
+			cleanupGlobalTrace();
+			try {
+				const { shutdownOpenTelemetry } = await import("@rspack/tracing");
+				await shutdownOpenTelemetry();
+			} catch (error) {
+				// ignore cleanup tracing error
+			}
+		}
+	},
+	RemoveDuplicateModulesPlugin
 };

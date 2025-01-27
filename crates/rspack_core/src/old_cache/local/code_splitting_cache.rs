@@ -1,21 +1,25 @@
 use futures::Future;
 use indexmap::IndexMap;
-use rspack_collections::Database;
 use rspack_error::Result;
 use rustc_hash::FxHashMap as HashMap;
 use tracing::instrument;
 
-use crate::{Chunk, ChunkGraph, ChunkGroup, ChunkGroupUkey, ChunkUkey, Compilation};
+use crate::{
+  build_chunk_graph::code_splitter::CodeSplitter, incremental::IncrementalPasses, ChunkByUkey,
+  ChunkGraph, ChunkGroupByUkey, ChunkGroupUkey, ChunkUkey, Compilation, ModuleIdentifier,
+};
 
 #[derive(Debug, Default)]
 pub struct CodeSplittingCache {
-  chunk_by_ukey: Database<Chunk>,
+  chunk_by_ukey: ChunkByUkey,
   chunk_graph: ChunkGraph,
-  chunk_group_by_ukey: Database<ChunkGroup>,
+  chunk_group_by_ukey: ChunkGroupByUkey,
   entrypoints: IndexMap<String, ChunkGroupUkey>,
   async_entrypoints: Vec<ChunkGroupUkey>,
   named_chunk_groups: HashMap<String, ChunkGroupUkey>,
   named_chunks: HashMap<String, ChunkUkey>,
+  pub(crate) code_splitter: CodeSplitter,
+  pub(crate) module_idx: HashMap<ModuleIdentifier, (u32, u32)>,
 }
 
 #[instrument(skip_all)]
@@ -27,13 +31,23 @@ where
   T: Fn(&'a mut Compilation) -> F,
   F: Future<Output = Result<&'a mut Compilation>>,
 {
-  let is_incremental_rebuild = compilation.options.is_incremental_rebuild_make_enabled();
-  if !is_incremental_rebuild {
+  if !compilation
+    .incremental
+    .can_read_mutations(IncrementalPasses::MAKE)
+  {
     task(compilation).await?;
     return Ok(());
   }
 
-  if !compilation.has_module_import_export_change() {
+  let parallel_code_splitting = compilation.options.experiments.parallel_code_splitting;
+  // TODO: parallel_code_splitting is not supported with incremental code splitting for now
+  let incremental_code_splitting = !parallel_code_splitting
+    && compilation
+      .incremental
+      .can_read_mutations(IncrementalPasses::BUILD_CHUNK_GRAPH);
+  let no_change = !compilation.has_module_import_export_change();
+
+  if incremental_code_splitting || no_change {
     let cache = &mut compilation.code_splitting_cache;
     rayon::scope(|s| {
       s.spawn(|_| compilation.chunk_by_ukey = cache.chunk_by_ukey.clone());
@@ -45,7 +59,20 @@ where
       s.spawn(|_| compilation.named_chunks = cache.named_chunks.clone());
     });
 
-    return Ok(());
+    let module_idx = cache.module_idx.clone();
+    let mut module_graph = compilation.get_module_graph_mut();
+    for (m, (pre, post)) in module_idx {
+      let Some(mgm) = module_graph.module_graph_module_by_identifier_mut(&m) else {
+        continue;
+      };
+
+      mgm.pre_order_index = Some(pre);
+      mgm.post_order_index = Some(post);
+    }
+
+    if !incremental_code_splitting && no_change {
+      return Ok(());
+    }
   }
 
   let compilation = task(compilation).await?;
@@ -59,5 +86,21 @@ where
     s.spawn(|_| cache.named_chunk_groups = compilation.named_chunk_groups.clone());
     s.spawn(|_| cache.named_chunks = compilation.named_chunks.clone());
   });
+
+  let mg = compilation.get_module_graph();
+  let mut map = HashMap::default();
+  for m in mg.modules().keys() {
+    let Some(mgm) = mg.module_graph_module_by_identifier(m) else {
+      continue;
+    };
+
+    let (Some(pre), Some(post)) = (mgm.pre_order_index, mgm.post_order_index) else {
+      continue;
+    };
+
+    map.insert(*m, (pre, post));
+  }
+  let cache = &mut compilation.code_splitting_cache;
+  cache.module_idx = map;
   Ok(())
 }

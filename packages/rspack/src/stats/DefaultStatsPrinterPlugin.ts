@@ -45,7 +45,12 @@ const getResourceName = (resource: string) => {
 };
 
 const getModuleName = (name: string) => {
-	const [, prefix, resource] = /^(.*!)?([^!]*)$/.exec(name) || [];
+	const matchResourceMatch = /^([^!]+)!=!/.exec(name);
+	const n = matchResourceMatch
+		? matchResourceMatch[0] +
+			getResourceName(name.slice(matchResourceMatch[0].length))
+		: name;
+	const [, prefix, resource] = /^(.*!)?([^!]*)$/.exec(n) || [];
 	return [prefix, getResourceName(resource)];
 };
 
@@ -120,7 +125,7 @@ const SIMPLE_PRINTERS: Record<
 			nameMessage && versionMessage
 				? `${nameMessage} (${versionMessage})`
 				: versionMessage || nameMessage || "Rspack";
-		let statusMessage;
+		let statusMessage: string;
 		if (errorsMessage && warningsMessage) {
 			statusMessage = `compiled with ${errorsMessage} and ${warningsMessage}`;
 		} else if (errorsMessage) {
@@ -307,6 +312,8 @@ const SIMPLE_PRINTERS: Record<
 						: `from: ${sourceFilename}`
 				)
 			: undefined,
+	"asset.info.copied": (copied, { green, formatFlag }) =>
+		copied ? green(formatFlag("copied")) : undefined,
 	"asset.info.development": (development, { green, formatFlag }) =>
 		development ? green(formatFlag("dev")) : undefined,
 	"asset.info.hotModuleReplacement": (
@@ -774,6 +781,7 @@ const PREFERRED_ORDERS: Record<string, string[]> = {
 	"asset.info": [
 		"immutable",
 		"sourceFilename",
+		"copied",
 		"javascriptModule",
 		"development",
 		"hotModuleReplacement"
@@ -1362,8 +1370,8 @@ export class DefaultStatsPrinterPlugin {
 									) {
 										start = options.colors[color];
 									} else {
-										// @ts-expect-error
-										start = AVAILABLE_COLORS[color];
+										start =
+											AVAILABLE_COLORS[color as keyof typeof AVAILABLE_COLORS];
 									}
 								}
 								if (start) {
@@ -1393,9 +1401,14 @@ export class DefaultStatsPrinterPlugin {
 					for (const key of Object.keys(SIMPLE_PRINTERS)) {
 						stats.hooks.print
 							.for(key)
-							.tap("DefaultStatsPrinterPlugin", (obj, ctx) =>
-								// @ts-expect-error
-								SIMPLE_PRINTERS[key](obj, ctx, stats)
+							.tap(
+								"DefaultStatsPrinterPlugin",
+								(obj, ctx) =>
+									SIMPLE_PRINTERS[key](
+										obj,
+										ctx as Required<StatsPrinterContext>,
+										stats
+									) as string
 							);
 					}
 

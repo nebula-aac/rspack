@@ -19,27 +19,25 @@ module.exports = {
 		expect(typeof stats?.hash).toBe("string");
 		expect(stats?.toJson(statsOptions)).toMatchSnapshot();
 		expect(stats?.toString(statsOptions)).toMatchInlineSnapshot(`
-		"PublicPath: auto
-		asset main.js 207 bytes {909} [emitted] (name: main)
-		Entrypoint main 207 bytes = main.js
+		PublicPath: auto
+		asset main.js 204 bytes {909} [emitted] (name: main)
+		Entrypoint main 204 bytes = main.js
 		chunk {909} (runtime: main) main.js (main) 55 bytes [entry] [rendered]
 		  > ./fixtures/a main
 		  ./fixtures/a.js [585] 55 bytes {909} [depth 0] [built] [code generated]
-		    [no exports]
 		    [used exports unknown]
-		    Statement with side_effects in source code at ./fixtures/a.js:1:0-3:2
+		    Statement with side_effects in source code at ./fixtures/a.js<LINE_COL_RANGE>
 		    ModuleConcatenation bailout: Module is not an ECMAScript module
 		    entry ./fixtures/a
 		    cjs self exports reference self [585] ./fixtures/a.js
 		./fixtures/a.js [585] 55 bytes {909} [depth 0] [built] [code generated]
-		  [no exports]
 		  [used exports unknown]
-		  Statement with side_effects in source code at ./fixtures/a.js:1:0-3:2
+		  Statement with side_effects in source code at ./fixtures/a.js<LINE_COL_RANGE>
 		  ModuleConcatenation bailout: Module is not an ECMAScript module
 		  entry ./fixtures/a
 		  cjs self exports reference self [585] ./fixtures/a.js
 		  
-		Rspack compiled successfully (a156b269cd7b4340da9d)"
+		Rspack compiled successfully (59afbeeb2d3dd524)
 	`);
 	}
 };

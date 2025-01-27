@@ -1,7 +1,8 @@
+use cow_utils::CowUtils;
 use rspack_collections::Identifier;
 use rspack_core::{
   impl_runtime_module,
-  rspack_sources::{BoxSource, RawSource, SourceExt},
+  rspack_sources::{BoxSource, RawStringSource, SourceExt},
   ChunkUkey, Compilation, RuntimeGlobals, RuntimeModule,
 };
 
@@ -29,16 +30,18 @@ impl RuntimeModule for EnsureChunkRuntimeModule {
     let chunk_ukey = self.chunk.expect("should have chunk");
     let runtime_requirements = get_chunk_runtime_requirements(compilation, &chunk_ukey);
     Ok(
-      RawSource::from(
+      RawStringSource::from(
         match runtime_requirements.contains(RuntimeGlobals::ENSURE_CHUNK_HANDLERS) {
-          true => include_str!("runtime/ensure_chunk.js").replace(
-            "$FETCH_PRIORITY$",
-            if runtime_requirements.contains(RuntimeGlobals::HAS_FETCH_PRIORITY) {
-              ", fetchPriority"
-            } else {
-              ""
-            },
-          ),
+          true => include_str!("runtime/ensure_chunk.js")
+            .cow_replace(
+              "$FETCH_PRIORITY$",
+              if runtime_requirements.contains(RuntimeGlobals::HAS_FETCH_PRIORITY) {
+                ", fetchPriority"
+              } else {
+                ""
+              },
+            )
+            .into_owned(),
           false => include_str!("runtime/ensure_chunk_with_inline.js").to_string(),
         },
       )

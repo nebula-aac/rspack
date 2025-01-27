@@ -1,8 +1,6 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": [
-    "src"
-  ],
+  "include": ["src"],
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "src"
@@ -10,9 +8,9 @@
   "references": [
     {
       "path": "../rspack"
-    },
-    {
-      "path": "../rspack-dev-server"
     }
-  ]
+  ],
+  "ts-node": {
+    "transpileOnly": true
+  }
 }

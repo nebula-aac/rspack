@@ -1,5 +1,6 @@
 ---
 date: 2023-11-22 17:31:00
+sidebar: false
 ---
 
 # Rspack 0.4 发布公告
@@ -14,7 +15,7 @@ Rspack 不再支持 Node.js 14，现在需要 Node.js 16+。
 
 ### 调整 @rspack/core 为 @rspack/cli 的 peer dependency
 
-`@rspack/core` 现在是 `@rspack/cli` 的 peerDependency，而不是直接的依赖关系。这意味着现在您需要手动安装 `@rspack/core` 和 `@rspack/cli`。这使得 Rspack 更加接近 webpack。从长远来看，`@rspack/cli` 的定位将不再是开箱即用的解决方案。我们建议使用 [Rsbuild](https://rsbuild.dev/) 作为开箱即用的解决方案。
+`@rspack/core` 现在是 `@rspack/cli` 的 peerDependency，而不是直接的依赖关系。这意味着现在你需要手动安装 `@rspack/core` 和 `@rspack/cli`。这使得 Rspack 更加接近 webpack。从长远来看，`@rspack/cli` 的定位将不再是开箱即用的解决方案。我们建议使用 [Rsbuild](https://rsbuild.dev/) 作为开箱即用的解决方案。
 
 ### 废弃默认转换
 
@@ -147,7 +148,7 @@ module.exports = {
 
 ### 废弃 builtin:sass-loader
 
-`builtin:sass-loader` 现已被废弃。如果您正在使用它，请迁移到 `sass-loader`。Rspack 将在 v0.5.0 中移除 `builtin:sass-loader`。
+`builtin:sass-loader` 现已被废弃。如果你正在使用它，请迁移到 `sass-loader`。Rspack 将在 v0.5.0 中移除 `builtin:sass-loader`。
 
 ### experiments.incrementalRebuild 配置废弃
 
@@ -157,13 +158,13 @@ module.exports = {
 
 以前，一些 API 可能会通过从 @rspack/core 重新导出而被意外导出。现在通过此重构，我们从 @rspack/core 中清理了导出的 API。
 
-这不应该造成任何问题，但如果您意外导出了 API，则可能会出现问题，您可能会以不正确的方式使用 Rspack。
+这不应该造成任何问题，但如果你意外导出了 API，则可能会出现问题，你可能会以不正确的方式使用 Rspack。
 
 如果确实有需要从此重构中移除的 API，请在 Rspack 仓库中提出问题。
 
 ### 废弃 `builtins.devFriendlySplitChunks` 和 `experiments.newSplitChunks`
 
-为了完全迁移到 Webpack 的 splitChunks 实现，这些字段已被废弃。Rspack 将在 v0.5.0 中移除这些字段。
+为了完全迁移到 webpack 的 splitChunks 实现，这些字段已被废弃。Rspack 将在 v0.5.0 中移除这些字段。
 
 ### 默认启用新的解析器
 
@@ -175,13 +176,13 @@ module.exports = {
 
 要退出新解析器，请将 `experiments.rspackFuture.newResolver` 设置为 `false`。
 
-## Migration Guide
+## Migration guide
 
 迁移示例 [migrate example](https://github.com/rspack-contrib/rspack-examples/pull/2) 展示了如何从 Rspack 0.3.14 迁移到 Rspack 0.4.0
 
 ### 选择 `@rspack/cli` 还是 `Rsbuild`？
 
-如果您的应用程序是 CSR 应用程序，则我们强烈建议您使用 Rsbuild 而不是自行配置 Rspack，因为与 `@rspack/cli` 相比，Rsbuild 更容易使用。
+如果你的应用程序是 CSR 应用程序，则我们强烈建议你使用 Rsbuild 而不是自行配置 Rspack，因为与 `@rspack/cli` 相比，Rsbuild 更容易使用。
 
 ### 升级 Node.js 版本
 
@@ -216,7 +217,7 @@ module.exports = {
 
 ### 对于 React 应用程序，请使用 `@rspack/plugin-react-refresh` 来支持 Fast Refresh
 
-当我们禁用默认转换时，`builtin.react.refresh` 将无法工作，因此您需要使用 `@rspack/plugin-react-refresh` 来启用 Fast Refresh，更多细节请参阅 [Deprecating builtin.react.refresh](#废弃-builtinreactrefresh)。
+当我们禁用默认转换时，`builtin.react.refresh` 将无法工作，因此你需要使用 `@rspack/plugin-react-refresh` 来启用 Fast Refresh，更多细节请参阅 [Deprecating builtin.react.refresh](#废弃-builtinreactrefresh)。
 
 ### 迁移 builtin options 到 builtin plugins
 
@@ -224,13 +225,13 @@ Rspack 在 v0.4.0 中废弃了部分 builtin options 并迁移至 Rspack [内部
 
 目前，rspack 的内部插件分为两类：
 
-- 与 Webpack 兼容的插件，如 DefinePlugin, ProvidePlugin 等，这部分实现与 webpack 完成了完整的对齐
+- 与 webpack 兼容的插件，如 DefinePlugin, ProvidePlugin 等，这部分实现与 webpack 完成了完整的对齐
 - Rspack 独有的插件，如 SwcJsMinimizerRspackPlugin, CopyRspackPlugin 等
 
 原有的 `builtins.define` 可以这样迁移：
 
 ```diff
-+ const rspack = require("@rspack/core")
++ const { rspack } = require("@rspack/core")
 module.exports = {
 -  builtins: {
 -    define: { process.env.NODE_ENV: JSON.stringify(process.env.NODE_ENV) }
@@ -244,7 +245,7 @@ module.exports = {
 对于 `builtins.html` 可以直接迁移到 [HtmlRspackPlugin](/plugins/rspack/html-rspack-plugin)：
 
 ```diff
-+ const rspack = require("@rspack/core")
++ const { rspack } = require("@rspack/core")
 module.exports = {
 -  builtins: {
 -    html: [{ template: "./index.html" }]
@@ -258,7 +259,7 @@ module.exports = {
 当 `builtins.html` 中存在多个配置，可以创建多个插件实例：
 
 ```js
-const rspack = require('@rspack/core');
+const { rspack } = require('@rspack/core');
 module.exports = {
   plugins: [
     new rspack.HtmlRspackPlugin({ template: './index.html' }),
@@ -272,7 +273,7 @@ module.exports = {
 原先的 `builtins.minifyOptions` 我们提供了 [SwcJsMinimizerRspackPlugin](/plugins/rspack/swc-js-minimizer-rspack-plugin)：
 
 ```js
-const rspack = require('@rspack/core');
+const { rspack } = require('@rspack/core');
 module.exports = {
   optimization: {
     minimizer: [

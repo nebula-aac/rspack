@@ -3,7 +3,7 @@ import { Stability } from '@components/ApiMeta.tsx';
 
 # Preact
 
-## How to Use
+## How to use
 
 Rspack provides two solutions to support Preact:
 
@@ -128,7 +128,10 @@ module.exports = {
       },
     ],
   },
-  plugins: [isDev && new PreactRefreshPlugin()].filter(Boolean),
+  plugins: [
+    isDev && new PreactRefreshPlugin(),
+    isDev && new rspack.HotModuleReplacementPlugin(),
+  ].filter(Boolean),
 };
 ```
 

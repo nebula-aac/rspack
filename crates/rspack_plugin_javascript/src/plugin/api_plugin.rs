@@ -28,7 +28,7 @@ async fn compilation(
 #[plugin_hook(JavascriptModulesRenderModuleContent for APIPlugin)]
 fn render_module_content(
   &self,
-  _compilation: &Compilation,
+  compilation: &Compilation,
   module: &BoxModule,
   _source: &mut RenderSource,
   init_fragments: &mut ChunkInitFragments,
@@ -36,10 +36,19 @@ fn render_module_content(
   if let Some(build_info) = module.build_info()
     && build_info.need_create_require
   {
+    let need_prefix = compilation
+      .options
+      .output
+      .environment
+      .supports_node_prefix_for_core_modules();
+
     init_fragments.push(
       NormalInitFragment::new(
-        "import { createRequire as __WEBPACK_EXTERNAL_createRequire } from 'module';\n".to_string(),
-        InitFragmentStage::StageHarmonyImports,
+        format!(
+          "import {{ createRequire as __WEBPACK_EXTERNAL_createRequire }} from \"{}\";\n",
+          if need_prefix { "node:module" } else { "module" }
+        ),
+        InitFragmentStage::StageESMImports,
         0,
         InitFragmentKey::ModuleExternal("node-commonjs".to_string()),
         None,
@@ -55,11 +64,7 @@ impl Plugin for APIPlugin {
     "rspack.APIPlugin"
   }
 
-  fn apply(
-    &self,
-    ctx: PluginContext<&mut ApplyContext>,
-    _options: &mut CompilerOptions,
-  ) -> Result<()> {
+  fn apply(&self, ctx: PluginContext<&mut ApplyContext>, _options: &CompilerOptions) -> Result<()> {
     ctx
       .context
       .compiler_hooks

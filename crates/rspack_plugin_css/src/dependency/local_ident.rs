@@ -1,3 +1,4 @@
+use rspack_cacheable::{cacheable, cacheable_dyn};
 use rspack_core::{
   AsContextDependency, AsModuleDependency, Compilation, Dependency, DependencyCategory,
   DependencyId, DependencyTemplate, DependencyType, ExportNameOrSpec, ExportSpec,
@@ -7,6 +8,7 @@ use rspack_util::ext::DynHash;
 
 use crate::utils::escape_css;
 
+#[cacheable]
 #[derive(Debug, Clone)]
 pub struct CssLocalIdentDependency {
   id: DependencyId,
@@ -28,6 +30,7 @@ impl CssLocalIdentDependency {
   }
 }
 
+#[cacheable_dyn]
 impl Dependency for CssLocalIdentDependency {
   fn id(&self) -> &DependencyId {
     &self.id
@@ -65,18 +68,14 @@ impl Dependency for CssLocalIdentDependency {
   }
 }
 
+#[cacheable_dyn]
 impl DependencyTemplate for CssLocalIdentDependency {
   fn apply(
     &self,
     source: &mut TemplateReplaceSource,
     _code_generatable_context: &mut TemplateContext,
   ) {
-    source.replace(
-      self.start,
-      self.end,
-      &escape_css(&self.local_ident, false),
-      None,
-    );
+    source.replace(self.start, self.end, &escape_css(&self.local_ident), None);
   }
 
   fn dependency_id(&self) -> Option<DependencyId> {

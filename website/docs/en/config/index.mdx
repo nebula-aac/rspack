@@ -1,8 +1,10 @@
+import { PackageManagerTabs } from '@theme';
+
 # Configure Rspack
 
 Rspack provides configurations similar to webpack. This chapter will show you how to use the Rspack configuration.
 
-## Configuration File
+## Configuration file
 
 When you run the Rspack CLI, Rspack automatically reads the `rspack.config.js` file in the current working directory.
 
@@ -16,18 +18,46 @@ module.exports = {
 };
 ```
 
-### Supported configuration file formats
+### Configuration file formats
 
 Rspack supports four types of configuration files, `.js`, `.ts`, `.cjs` and `.mjs` formats.
 
-- `rspack.config.js`: defaults to `CommonJS` format, or `ES Module` format if the type of the package.json is module.
-- `rspack.config.ts`: `TypeScript` format, which is compiled internally to `.js` format using `ts-node`.
+- `rspack.config.js`: defaults to `CommonJS` format, or `ES modules` format if the type of the package.json is module.
+- `rspack.config.ts`: `TypeScript` format, see [TypeScript Configuration File](#typescript-configuration-file) for more details.
 - `rspack.config.cjs`: Forced to `CommonJS` format.
-- `rspack.config.mjs`: Forced to `ES module` format.
+- `rspack.config.mjs`: Forced to `ES modules` format.
 
-See [ES Module](https://nodejs.org/api/esm.html#modules-ecmascript-modules) and [CommonJS](https://nodejs.org/api/modules.html) for the difference between `CommonJS` and `ES Module`
+> See [ES modules](https://nodejs.org/api/esm.html#modules-ecmascript-modules) and [CommonJS](https://nodejs.org/api/modules.html) for the difference between `CommonJS` and `ES modules`.
 
-### Type Checking
+### TypeScript configuration file
+
+When using `rspack.config.ts`, you need to install additional dependencies to resolve TypeScript files. You can choose one of the following:
+
+#### Using esbuild
+
+Install [esbuild](https://npmjs.com/package/esbuild) and [esbuild-register](https://npmjs.com/package/esbuild-register), no additional configuration is needed.
+
+<PackageManagerTabs command="add esbuild esbuild-register -D" />
+
+#### Using ts-node
+
+Install [ts-node](https://npmjs.com/package/ts-node):
+
+<PackageManagerTabs command="add ts-node -D" />
+
+Then configure `ts-node` to use `CommonJS` modules in `tsconfig.json`:
+
+```json title="tsconfig.json"
+{
+  "ts-node": {
+    "compilerOptions": {
+      "module": "CommonJS"
+    }
+  }
+}
+```
+
+### Type checking
 
 `rspack.config.js` is a JavaScript file, you can use JSDoc to enable the IDE's Intellisense and TypeScript type checking.
 
@@ -92,7 +122,7 @@ If the version of Node.js you are using supports the [--experimental-transform-t
 
 Note that Rspack will first search JavaScript and then TypeScript if the JS file does not exist.
 
-## Specify the Configuration File
+## Specify the configuration file
 
 You can specify the name of the configuration file using the `--config` option.
 
@@ -113,7 +143,7 @@ You can also abbreviate the `--config` option to `-c`:
 $ rspack build -c rspack.prod.config.js
 ```
 
-## Exporting a Configuration Function
+## Exporting a configuration function
 
 Rspack supports exporting a function in `rspack.config.js`, you can dynamically compute the configuration in the function and return it to Rspack.
 
@@ -130,7 +160,7 @@ As you can see from the example above, the function takes two input parameters:
 - The first argument is `env`, which corresponds to the value of the `--env` option when running the CLI command.
 - The second argument is `argv`, which contains all the options passed to the CLI.
 
-### Determine the Current Environment
+### Determine the current environment
 
 In addition to passing the `env` parameter, it is more common to use `process.env.NODE_ENV` to determine the current environment:
 
@@ -142,3 +172,22 @@ module.exports = function (env, argv) {
   };
 };
 ```
+
+## Merge configurations
+
+You can use the `merge` function exported by `webpack-merge` to merge multiple configurations.
+
+```js title="rspack.config.js"
+const { merge } = require('webpack-merge');
+
+const base = {};
+
+const dev = {
+  plugins: [new DevelopmentSpecifiedPlugin()],
+};
+
+module.exports =
+  process.env.NODE_ENV === 'development' ? merge(base, dev) : base;
+```
+
+For more information of `merge`, please refer to [webpack-merge documentation](https://npmjs.com/package/webpack-merge).

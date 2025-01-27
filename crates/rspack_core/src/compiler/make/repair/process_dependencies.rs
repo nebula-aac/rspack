@@ -13,13 +13,13 @@ pub struct ProcessDependenciesTask {
   pub original_module_identifier: ModuleIdentifier,
   pub dependencies: Vec<DependencyId>,
 }
-
+#[async_trait::async_trait]
 impl Task<MakeTaskContext> for ProcessDependenciesTask {
   fn get_task_type(&self) -> TaskType {
     TaskType::Sync
   }
 
-  fn sync_run(self: Box<Self>, context: &mut MakeTaskContext) -> TaskResult<MakeTaskContext> {
+  async fn main_run(self: Box<Self>, context: &mut MakeTaskContext) -> TaskResult<MakeTaskContext> {
     let Self {
       original_module_identifier,
       dependencies,
@@ -57,7 +57,7 @@ impl Task<MakeTaskContext> for ProcessDependenciesTask {
         sorted_dependencies
           .entry(resource_identifier)
           .or_insert(vec![])
-          .push(dependency_id);
+          .push(dependency.clone());
       }
     }
 
@@ -71,10 +71,6 @@ impl Task<MakeTaskContext> for ProcessDependenciesTask {
         .compiler_options
         .profile
         .then(Box::<ModuleProfile>::default);
-      let dependency = module_graph
-        .dependency_by_id(&dependencies[0])
-        .expect("should have dependency")
-        .clone();
       let original_module_source = module_graph
         .module_by_identifier(&original_module_identifier)
         .and_then(|m| m.as_normal_module())
@@ -85,6 +81,7 @@ impl Task<MakeTaskContext> for ProcessDependenciesTask {
             None
           }
         });
+      let dependency = &dependencies[0];
       let dependency_type = dependency.dependency_type();
       // TODO move module_factory calculate to dependency factories
       let module_factory = context
@@ -99,6 +96,7 @@ impl Task<MakeTaskContext> for ProcessDependenciesTask {
         })
         .clone();
       res.push(Box::new(FactorizeTask {
+        compilation_id: context.compilation_id,
         module_factory,
         original_module_identifier: Some(module.identifier()),
         original_module_context: module.get_context(),
@@ -107,11 +105,11 @@ impl Task<MakeTaskContext> for ProcessDependenciesTask {
           .as_normal_module()
           .and_then(|module| module.name_for_condition()),
         issuer_layer: module.get_layer().cloned(),
-        dependency,
         dependencies,
         resolve_options: module.get_resolve_options(),
         options: context.compiler_options.clone(),
         current_profile,
+        resolver_factory: context.resolver_factory.clone(),
       }));
     }
     Ok(res)

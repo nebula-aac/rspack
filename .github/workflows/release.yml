@@ -28,6 +28,8 @@ on:
 permissions:
   # To publish packages with provenance
   id-token: write
+  # Allow commenting on issues for `reusable-build.yml`
+  issues: write
 
 jobs:
   get-runner-labels:
@@ -86,7 +88,7 @@ jobs:
         uses: ./.github/actions/pnpm-cache
 
       - name: Download artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4.1.7
         with:
           path: artifacts
 
@@ -106,18 +108,6 @@ jobs:
         run: |
           ./x publish stable --tag ${{inputs.tag}} ${{inputs.dry_run && '--dry-run' || '--no-dry-run'}} ${{inputs.push_tags && '--push-tags' || '--no-push-tags'}}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          REPOSITORY: ${{ github.repository }}
-          REF: ${{ github.ref }}
-          ONLY_RELEASE_TAG: true
-
-      - name: Release Nightly(After Full)
-        run: |
-          ./x version snapshot
-          ./x publish snapshot --tag nightly
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           REPOSITORY: ${{ github.repository }}
           REF: ${{ github.ref }}

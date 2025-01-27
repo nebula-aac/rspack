@@ -1,5 +1,5 @@
-#!/usr/bin/env node
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
 	type Argv,
 	type ESLintTemplateName,
@@ -7,6 +7,8 @@ import {
 	create,
 	select
 } from "create-rstack";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function getTemplateName({ template }: Argv) {
 	if (typeof template === "string") {

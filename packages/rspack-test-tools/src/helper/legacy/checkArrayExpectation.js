@@ -30,8 +30,8 @@ const explain = object => {
 				value = JSON.stringify(value);
 			}
 			let msg = `${key} = ${value}`;
-			if (key !== "stack" && key !== "details" && msg.length > 100)
-				msg = msg.slice(0, 97) + "...";
+			if (key !== "stack" && key !== "details" && msg.length > 600)
+				msg = msg.slice(0, 597) + "...";
 			return msg;
 		})
 		.join("; ");
@@ -63,7 +63,7 @@ ${tooMuch.map(item => `${explain(item)}`).join("\n\n")}`);
 	return diff.join("\n\n");
 };
 
-module.exports = function checkArrayExpectation(
+module.exports = async function checkArrayExpectation(
 	testDirectory,
 	object,
 	kind,
@@ -71,11 +71,10 @@ module.exports = function checkArrayExpectation(
 	upperCaseKind,
 	done
 ) {
-	if (!done) {
-		done = upperCaseKind;
-		upperCaseKind = filename;
-		filename = `${kind}s`;
-	}
+	const usePromise = typeof done === "function";
+	done = typeof done === "function" ? done : error => {
+		throw error
+	};
 	let array = object[`${kind}s`];
 	if (Array.isArray(array)) {
 		if (kind === "warning") {

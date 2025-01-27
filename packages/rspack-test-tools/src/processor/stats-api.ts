@@ -10,12 +10,12 @@ import type {
 	TCompilerStats
 } from "../type";
 import { SimpleTaskProcessor } from "./simple";
-const serializer = require("jest-serializer-path");
 
 export interface IStatsAPIProcessorOptions<T extends ECompilerType> {
 	options?: (context: ITestContext) => TCompilerOptions<T>;
 	name: string;
 	compilerType: T;
+	snapshotName?: string;
 	compiler?: (context: ITestContext, compiler: TCompiler<T>) => Promise<void>;
 	build?: (context: ITestContext, compiler: TCompiler<T>) => Promise<void>;
 	check?: (stats: TCompilerStats<T>, compiler: TCompiler<T>) => Promise<void>;
@@ -61,9 +61,5 @@ export class StatsAPIProcessor<
 		const stats = compiler.getStats();
 		env.expect(typeof stats).toBe("object");
 		await this._statsAPIOptions.check?.(stats!, compiler.getCompiler()!);
-	}
-
-	static addSnapshotSerializer(expectImpl: jest.Expect) {
-		expectImpl.addSnapshotSerializer(serializer);
 	}
 }

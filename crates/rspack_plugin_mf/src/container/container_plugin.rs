@@ -30,6 +30,7 @@ pub struct ContainerPluginOptions {
   pub enhanced: bool,
 }
 
+#[rspack_cacheable::cacheable]
 #[derive(Debug, Clone, Serialize)]
 pub struct ExposeOptions {
   pub name: Option<String>,
@@ -93,6 +94,7 @@ fn runtime_requirements_in_tree(
   &self,
   compilation: &mut Compilation,
   chunk_ukey: &ChunkUkey,
+  _all_runtime_requirements: &RuntimeGlobals,
   runtime_requirements: &RuntimeGlobals,
   runtime_requirements_mut: &mut RuntimeGlobals,
 ) -> Result<Option<()>> {
@@ -111,11 +113,7 @@ impl Plugin for ContainerPlugin {
     "rspack.ContainerPlugin"
   }
 
-  fn apply(
-    &self,
-    ctx: PluginContext<&mut ApplyContext>,
-    _options: &mut CompilerOptions,
-  ) -> Result<()> {
+  fn apply(&self, ctx: PluginContext<&mut ApplyContext>, _options: &CompilerOptions) -> Result<()> {
     ctx
       .context
       .compiler_hooks

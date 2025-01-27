@@ -1,6 +1,8 @@
 use std::{fmt, ops::Deref, sync::Arc};
 
+use cow_utils::CowUtils;
 use miette::{GraphicalTheme, IntoDiagnostic, MietteDiagnostic};
+use rspack_cacheable::{cacheable, with::Unsupported};
 use rspack_collections::Identifier;
 use rspack_paths::{Utf8Path, Utf8PathBuf};
 use swc_core::common::{SourceMap, Span};
@@ -37,8 +39,8 @@ impl From<miette::Severity> for RspackSeverity {
 
 impl From<&str> for RspackSeverity {
   fn from(value: &str) -> Self {
-    let s = value.to_ascii_lowercase();
-    match s.as_str() {
+    let s = value.cow_to_ascii_lowercase();
+    match s.as_ref() {
       "warning" => RspackSeverity::Warn,
       _ => RspackSeverity::Error,
     }
@@ -58,12 +60,14 @@ impl fmt::Display for RspackSeverity {
   }
 }
 
+#[cacheable]
 #[derive(Debug, Clone, Copy)]
 pub struct SourcePosition {
   pub line: usize,
   pub column: usize,
 }
 
+#[cacheable]
 #[derive(Debug, Clone, Copy)]
 pub struct ErrorLocation {
   pub start: SourcePosition,
@@ -88,6 +92,7 @@ impl ErrorLocation {
   }
 }
 
+#[cacheable(with=Unsupported)]
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
   inner: Arc<miette::Error>,

@@ -12,7 +12,7 @@ import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
 
-import { ASSET_MODULE_TYPE } from "../ModuleTypeConstants";
+import { ASSET_MODULE_TYPE, JSON_MODULE_TYPE } from "../ModuleTypeConstants";
 import { Template } from "../Template";
 import {
 	LightningCssMinimizerRspackPlugin,
@@ -49,7 +49,7 @@ import type {
 	RspackFutureOptions,
 	RuleSetRules,
 	SnapshotOptions
-} from "./zod";
+} from "./types";
 
 export const applyRspackOptionsDefaults = (
 	options: RspackOptionsNormalized
@@ -88,14 +88,22 @@ export const applyRspackOptionsDefaults = (
 	// but Rspack currently does not support this option
 	F(options, "cache", () => development);
 
-	applyExperimentsDefaults(options.experiments);
+	applyExperimentsDefaults(options.experiments, {
+		production,
+		development
+	});
+
+	if (options.cache === false) {
+		options.experiments.cache = false;
+	}
 
 	applySnapshotDefaults(options.snapshot, { production });
 
 	applyModuleDefaults(options.module, {
 		asyncWebAssembly: options.experiments.asyncWebAssembly!,
 		css: options.experiments.css,
-		targetProperties
+		targetProperties,
+		mode: options.mode
 	});
 
 	applyOutputDefaults(options.output, {
@@ -121,10 +129,10 @@ export const applyRspackOptionsDefaults = (
 		targetProperties
 	});
 
-	// @ts-expect-error
 	F(options, "externalsType", () => {
 		return options.output.library
-			? options.output.library.type
+			? // loose type 'string', actual type is "commonjs" | "var" | "commonjs2"....
+				(options.output.library.type as any)
 			: options.output.module
 				? "module-import"
 				: "var";
@@ -192,7 +200,13 @@ const applyInfrastructureLoggingDefaults = (
 	D(infrastructureLogging, "appendOnly", !tty);
 };
 
-const applyExperimentsDefaults = (experiments: ExperimentsNormalized) => {
+const applyExperimentsDefaults = (
+	experiments: ExperimentsNormalized,
+	{ production, development }: { production: boolean; development: boolean }
+) => {
+	// IGNORE(experiments.cache): In webpack, cache is undefined by default
+	F(experiments, "cache", () => development);
+
 	D(experiments, "futureDefaults", false);
 	// IGNORE(experiments.lazyCompilation): In webpack, lazyCompilation is undefined by default
 	D(experiments, "lazyCompilation", false);
@@ -201,12 +215,31 @@ const applyExperimentsDefaults = (experiments: ExperimentsNormalized) => {
 	D(experiments, "layers", false);
 	D(experiments, "topLevelAwait", true);
 
+	// IGNORE(experiments.incremental): Rspack specific configuration for incremental
+	D(experiments, "incremental", !production ? {} : false);
+	if (typeof experiments.incremental === "object") {
+		D(experiments.incremental, "make", true);
+		D(experiments.incremental, "inferAsyncModules", false);
+		D(experiments.incremental, "providedExports", false);
+		D(experiments.incremental, "dependenciesDiagnostics", false);
+		D(experiments.incremental, "sideEffects", false);
+		D(experiments.incremental, "buildChunkGraph", false);
+		D(experiments.incremental, "moduleIds", false);
+		D(experiments.incremental, "chunkIds", false);
+		D(experiments.incremental, "modulesHashes", false);
+		D(experiments.incremental, "modulesCodegen", false);
+		D(experiments.incremental, "modulesRuntimeRequirements", false);
+		D(experiments.incremental, "chunksRuntimeRequirements", false);
+		D(experiments.incremental, "chunksHashes", false);
+		D(experiments.incremental, "chunksRender", false);
+		D(experiments.incremental, "emitAssets", true);
+	}
 	// IGNORE(experiments.rspackFuture): Rspack specific configuration
 	D(experiments, "rspackFuture", {});
 	// rspackFuture.bundlerInfo default value is applied after applyDefaults
-	if (typeof experiments.rspackFuture === "object") {
-		D(experiments.rspackFuture, "newIncremental", false);
-	}
+
+	// IGNORE(experiments.parallelCodeSplitting): Rspack specific configuration for new code splitting algorithm
+	D(experiments, "parallelCodeSplitting", false);
 };
 
 const applybundlerInfoDefaults = (
@@ -234,46 +267,22 @@ const applySnapshotDefaults = (
 ) => {};
 
 const applyJavascriptParserOptionsDefaults = (
-	parserOptions: JavascriptParserOptions,
-	fallback?: JavascriptParserOptions
+	parserOptions: JavascriptParserOptions
 ) => {
-	D(parserOptions, "dynamicImportMode", fallback?.dynamicImportMode ?? "lazy");
-	D(
-		parserOptions,
-		"dynamicImportPrefetch",
-		fallback?.dynamicImportPrefetch ?? false
-	);
-	D(
-		parserOptions,
-		"dynamicImportPreload",
-		fallback?.dynamicImportPreload ?? false
-	);
-	D(parserOptions, "url", fallback?.url ?? true);
-	D(
-		parserOptions,
-		"exprContextCritical",
-		fallback?.exprContextCritical ?? true
-	);
-	D(
-		parserOptions,
-		"wrappedContextCritical",
-		fallback?.wrappedContextCritical ?? false
-	);
-	D(parserOptions, "exportsPresence", fallback?.exportsPresence);
-	D(parserOptions, "importExportsPresence", fallback?.importExportsPresence);
-	D(
-		parserOptions,
-		"reexportExportsPresence",
-		fallback?.reexportExportsPresence
-	);
-	D(
-		parserOptions,
-		"strictExportPresence",
-		fallback?.strictExportPresence ?? false
-	);
-	D(parserOptions, "worker", fallback?.worker ?? ["..."]);
-	D(parserOptions, "overrideStrict", fallback?.overrideStrict ?? undefined);
-	D(parserOptions, "importMeta", fallback?.importMeta ?? true);
+	D(parserOptions, "dynamicImportMode", "lazy");
+	D(parserOptions, "dynamicImportPrefetch", false);
+	D(parserOptions, "dynamicImportPreload", false);
+	D(parserOptions, "url", true);
+	D(parserOptions, "exprContextCritical", true);
+	D(parserOptions, "wrappedContextCritical", false);
+	D(parserOptions, "wrappedContextRegExp", /.*/);
+	D(parserOptions, "strictExportPresence", false);
+	D(parserOptions, "requireAsExpression", true);
+	D(parserOptions, "requireDynamic", true);
+	D(parserOptions, "requireResolve", true);
+	D(parserOptions, "importDynamic", true);
+	D(parserOptions, "worker", ["..."]);
+	D(parserOptions, "importMeta", true);
 };
 
 const applyModuleDefaults = (
@@ -281,11 +290,13 @@ const applyModuleDefaults = (
 	{
 		asyncWebAssembly,
 		css,
-		targetProperties
+		targetProperties,
+		mode
 	}: {
 		asyncWebAssembly: boolean;
 		css?: boolean;
 		targetProperties: any;
+		mode?: Mode;
 	}
 ) => {
 	assertNotNill(module.parser);
@@ -303,25 +314,12 @@ const applyModuleDefaults = (
 	assertNotNill(module.parser.javascript);
 	applyJavascriptParserOptionsDefaults(module.parser.javascript);
 
-	F(module.parser, "javascript/auto", () => ({}));
-	assertNotNill(module.parser["javascript/auto"]);
-	applyJavascriptParserOptionsDefaults(
-		module.parser["javascript/auto"],
-		module.parser.javascript
-	);
-
-	F(module.parser, "javascript/dynamic", () => ({}));
-	assertNotNill(module.parser["javascript/dynamic"]);
-	applyJavascriptParserOptionsDefaults(
-		module.parser["javascript/dynamic"],
-		module.parser.javascript
-	);
-
-	F(module.parser, "javascript/esm", () => ({}));
-	assertNotNill(module.parser["javascript/esm"]);
-	applyJavascriptParserOptionsDefaults(
-		module.parser["javascript/esm"],
-		module.parser.javascript
+	F(module.parser, JSON_MODULE_TYPE, () => ({}));
+	assertNotNill(module.parser[JSON_MODULE_TYPE]);
+	D(
+		module.parser[JSON_MODULE_TYPE],
+		"exportsDepth",
+		mode === "development" ? 1 : Number.MAX_SAFE_INTEGER
 	);
 
 	if (css) {
@@ -612,9 +610,9 @@ const applyOutputDefaults = (
 	const uniqueNameId = Template.toIdentifier(output.uniqueName);
 	F(output, "hotUpdateGlobal", () => `webpackHotUpdate${uniqueNameId}`);
 	F(output, "chunkLoadingGlobal", () => `webpackChunk${uniqueNameId}`);
-	D(output, "cssHeadDataCompression", !development);
 	D(output, "assetModuleFilename", "[hash][ext][query]");
 	D(output, "webassemblyModuleFilename", "[hash].module.wasm");
+	D(output, "compareBeforeEmit", true);
 	F(output, "path", () => path.join(process.cwd(), "dist"));
 	F(output, "pathinfo", () => development);
 	D(
@@ -623,9 +621,11 @@ const applyOutputDefaults = (
 		tp && (tp.document || tp.importScripts) ? "auto" : ""
 	);
 
-	D(output, "hashFunction", futureDefaults ? "xxhash64" : "md4");
+	// IGNORE(output.hashFunction): Rspack uses faster xxhash64 by default
+	D(output, "hashFunction", "xxhash64");
 	D(output, "hashDigest", "hex");
-	D(output, "hashDigestLength", futureDefaults ? 16 : 20);
+	// IGNORE(output.hashDigestLength): xxhash64 uses 16-bit hash
+	D(output, "hashDigestLength", 16);
 	D(output, "strictModuleErrorHandling", false);
 	if (output.library) {
 		F(output.library, "type", () => (output.module ? "module" : "var"));
@@ -743,6 +743,7 @@ const applyOutputDefaults = (
 			() =>
 				output.uniqueName!.replace(/[^a-zA-Z0-9\-#=_/@.%]+/g, "_") || "webpack"
 		);
+		D(trustedTypes, "onPolicyCreationFailure", "stop");
 	}
 
 	const forEachEntry = (fn: (desc: EntryDescriptionNormalized) => void) => {
@@ -943,6 +944,8 @@ const applyOptimizationDefaults = (
 	D(optimization, "emitOnErrors", !production);
 	D(optimization, "runtimeChunk", false);
 	D(optimization, "realContentHash", production);
+	// IGNORE(optimization.avoidEntryIife): to update the default value of webpack and bump webpack version in Rspack.
+	D(optimization, "avoidEntryIife", false);
 	D(optimization, "minimize", production);
 	D(optimization, "concatenateModules", production);
 	// IGNORE(optimization.minimizer): Rspack use `SwcJsMinimizerRspackPlugin` and `LightningCssMinimizerRspackPlugin` by default
@@ -1055,6 +1058,9 @@ const getResolveDefaults = ({
 	});
 
 	const resolveOptions: ResolveOptions = {
+		// enable pnp only in pnp environment, see https://yarnpkg.com/advanced/pnpapi#processversionspnp
+		// IGNORE(resolve.pnp): Rspack use `resolve.enable` to enable Yarn PnP feature
+		pnp: !!process.versions.pnp,
 		modules: ["node_modules"],
 		conditionNames: conditions,
 		mainFiles: ["index"],
@@ -1075,7 +1081,7 @@ const getResolveDefaults = ({
 				preferRelative: true
 			},
 			commonjs: cjsDeps(),
-			// amd: cjsDeps(),
+			amd: cjsDeps(),
 			// for backward-compat: loadModule
 			// loader: cjsDeps(),
 			// for backward-compat: Custom Dependency and getResolve without dependencyType
@@ -1133,8 +1139,7 @@ const A = <T, P extends keyof T>(
 			if (item === "...") {
 				if (newArray === undefined) {
 					newArray = value.slice(0, i);
-					// @ts-expect-error
-					obj[prop] = newArray;
+					obj[prop] = newArray as any;
 				}
 				const items = factory();
 				if (items !== undefined) {

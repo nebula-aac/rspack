@@ -108,8 +108,9 @@ __webpack_require__.l = function (url, done, key, chunkId) {
 	}
 	if (!script) {
 		needAttach = true;
-		script = document.createElement('script');
 		
+    script = document.createElement('script');
+    
 		script.charset = 'utf-8';
 		script.timeout = 120;
 		if (__webpack_require__.nc) {
@@ -118,8 +119,8 @@ __webpack_require__.l = function (url, done, key, chunkId) {
 		
 		
 		script.src = url;
-
 		
+    
 	}
 	inProgress[url] = [done];
 	var onScriptComplete = function (prev, event) {
@@ -381,7 +382,7 @@ var __webpack_exports__ = {};
 /* eslint-env browser */
 
 // eslint-disable-next-line
-__webpack_require__.e(/* import() */ "src_inject_css").then(__webpack_require__.bind(__webpack_require__, "./src/inject.css?e351"));
+__webpack_require__.e(/* import() */ "src_inject_css").then(__webpack_require__.bind(__webpack_require__, "./src/inject.css"));
 
 })()
 ;

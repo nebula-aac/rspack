@@ -1,13 +1,14 @@
 use std::any::Any;
 use std::borrow::Cow;
-use std::fmt::Debug;
 
-use derivative::Derivative;
+use derive_more::Debug;
+use rspack_cacheable::cacheable_dyn;
 use rspack_error::{Result, TWithDiagnosticArray};
 use rspack_loader_runner::{AdditionalData, ResourceData};
 use rspack_sources::BoxSource;
 use rspack_util::ext::AsAny;
 use rspack_util::source_map::SourceMapKind;
+use rustc_hash::FxHashMap;
 use swc_core::common::Span;
 
 use crate::{
@@ -17,8 +18,7 @@ use crate::{
 };
 use crate::{ChunkGraph, ConcatenationScope, Context, ModuleGraph};
 
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Debug)]
 pub struct ParseContext<'a> {
   pub source: BoxSource,
   pub module_context: &'a Context,
@@ -28,11 +28,12 @@ pub struct ParseContext<'a> {
   pub module_user_request: &'a str,
   pub module_parser_options: Option<&'a ParserOptions>,
   pub module_source_map_kind: SourceMapKind,
-  #[derivative(Debug = "ignore")]
+  #[debug(skip)]
   pub loaders: &'a [BoxLoader],
   pub resource_data: &'a ResourceData,
   pub compiler_options: &'a CompilerOptions,
-  pub additional_data: AdditionalData,
+  pub additional_data: Option<AdditionalData>,
+  pub parse_meta: FxHashMap<String, String>,
   pub build_info: &'a mut BuildInfo,
   pub build_meta: &'a mut BuildMeta,
 }
@@ -83,6 +84,7 @@ pub struct GenerateContext<'a> {
   pub concatenation_scope: Option<&'a mut ConcatenationScope>,
 }
 
+#[cacheable_dyn]
 pub trait ParserAndGenerator: Send + Sync + Debug + AsAny {
   /// The source types that the generator can generate (the source types you can make requests for)
   fn source_types(&self) -> &[SourceType];

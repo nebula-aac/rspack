@@ -4,8 +4,9 @@ use std::{
   hash::{Hash, Hasher},
 };
 
+use cow_utils::CowUtils;
 use regex::{Captures, Regex};
-use rspack_core::{contextify, Compilation, OutputOptions};
+use rspack_core::{contextify, ChunkGraph, Compilation, OutputOptions};
 use rspack_error::Result;
 use rspack_hash::RspackHash;
 use rustc_hash::FxHashMap as HashMap;
@@ -56,11 +57,7 @@ impl ModuleFilenameHelpers {
     output_options: &OutputOptions,
     namespace: &str,
   ) -> ModuleFilenameTemplateFnCtx {
-    let Compilation {
-      chunk_graph,
-      options,
-      ..
-    } = compilation;
+    let Compilation { options, .. } = compilation;
     let context = &options.context;
 
     match module_or_source {
@@ -77,10 +74,10 @@ impl ModuleFilenameHelpers {
 
         let short_identifier = module.readable_identifier(context).to_string();
         let identifier = contextify(context, module_identifier);
-        let module_id = chunk_graph
-          .get_module_id(*module_identifier)
-          .map(|s| s.to_string())
-          .unwrap_or_default();
+        let module_id =
+          ChunkGraph::get_module_id(&compilation.module_ids_artifact, *module_identifier)
+            .map(|s| s.to_string())
+            .unwrap_or_default();
         let absolute_resource_path = "".to_string();
 
         let hash = get_hash(&identifier, output_options);
@@ -198,7 +195,7 @@ impl ModuleFilenameHelpers {
           .as_str();
 
         if content.len() + 2 == full_match.len() {
-          match content.to_lowercase().as_str() {
+          match content.cow_to_lowercase().as_ref() {
             "identifier" => Cow::from(&ctx.identifier),
             "short-identifier" => Cow::from(&ctx.short_identifier),
             "resource" => Cow::from(&ctx.resource),

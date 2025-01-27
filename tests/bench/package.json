@@ -1,0 +1,22 @@
+{
+    "name": "bench",
+    "private": true,
+    "license": "MIT",
+    "type": "module",
+    "scripts": {
+        "bench": "vitest bench --run"
+    },
+    "devDependencies": {
+        "@codspeed/vitest-plugin": "^4.0.0",
+        "@rspack/cli": "workspace:*",
+        "@rspack/core": "workspace:*",
+        "@rspack/plugin-react-refresh": "^1.0.1",
+        "@types/react": "^19.0.8",
+        "@types/react-dom": "^19.0.3",
+        "vitest": "^2.1.8"
+    },
+    "dependencies": {
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0"
+    }
+}

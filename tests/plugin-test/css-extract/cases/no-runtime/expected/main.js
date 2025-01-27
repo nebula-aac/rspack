@@ -1,7 +1,7 @@
 (() => { // webpackBootstrap
 "use strict";
 var __webpack_modules__ = ({
-"./style.css?305c": (function (__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+"./style.css": (function (__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 __webpack_require__.r(__webpack_exports__);
 // extracted by css-extract-rspack-plugin
 
@@ -106,8 +106,9 @@ __webpack_require__.l = function (url, done, key, chunkId) {
 	}
 	if (!script) {
 		needAttach = true;
-		script = document.createElement('script');
 		
+    script = document.createElement('script');
+    
 		script.charset = 'utf-8';
 		script.timeout = 120;
 		if (__webpack_require__.nc) {
@@ -116,8 +117,8 @@ __webpack_require__.l = function (url, done, key, chunkId) {
 		
 		
 		script.src = url;
-
 		
+    
 	}
 	inProgress[url] = [done];
 	var onScriptComplete = function (prev, event) {
@@ -285,11 +286,15 @@ chunkLoadingGlobal.push = webpackJsonpCallback.bind(
 })();
 /************************************************************************/
 var __webpack_exports__ = {};
+// This entry needs to be wrapped in an IIFE because it needs to be isolated against other modules in the chunk.
+(() => {
 __webpack_require__.r(__webpack_exports__);
-/* harmony import */var _style_css__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__("./style.css?305c");
+/* ESM import */var _style_css__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__("./style.css");
 
 
-__webpack_require__.e(/* import() | async */ "async").then(__webpack_require__.bind(__webpack_require__, "./async.css?5725"));
+__webpack_require__.e(/* import() | async */ "async").then(__webpack_require__.bind(__webpack_require__, "./async.css"));
+
+})();
 
 })()
 ;

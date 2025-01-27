@@ -8,12 +8,13 @@
  * https://github.com/webpack/webpack/blob/main/LICENSE
  */
 
+import path from "node:path";
+import util from "node:util";
 import type { Compilation } from "../Compilation";
 import type {
+	Amd,
 	AssetModuleFilename,
-	AsyncChunks,
 	Bail,
-	BaseUri,
 	CacheOptions,
 	ChunkFilename,
 	ChunkLoading,
@@ -31,8 +32,7 @@ import type {
 	DevtoolNamespace,
 	EnabledLibraryTypes,
 	EnabledWasmLoadingTypes,
-	EntryFilename,
-	EntryRuntime,
+	EntryDescription,
 	EntryStatic,
 	Environment,
 	Externals,
@@ -51,8 +51,8 @@ import type {
 	Iife,
 	ImportFunctionName,
 	ImportMetaName,
+	Incremental,
 	InfrastructureLogging,
-	Layer,
 	LazyCompilationOptions,
 	LibraryOptions,
 	Loader,
@@ -86,7 +86,7 @@ import type {
 	WatchOptions,
 	WebassemblyModuleFilename,
 	WorkerPublicPath
-} from "./zod";
+} from "./types";
 
 export const getNormalizedRspackOptions = (
 	config: RspackOptions
@@ -117,6 +117,13 @@ export const getNormalizedRspackOptions = (
 						)(config.entry)
 					: getNormalizedEntryStatic(config.entry),
 		output: nestedConfig(config.output, output => {
+			if ("cssHeadDataCompression" in output) {
+				util.deprecate(
+					() => {},
+					"cssHeadDataCompression is not used now, see https://github.com/web-infra-dev/rspack/pull/8534, this option could be removed in the future"
+				)();
+			}
+
 			const { library } = output;
 			const libraryAsName = library;
 			const libraryBase =
@@ -140,7 +147,6 @@ export const getNormalizedRspackOptions = (
 				chunkLoading: output.chunkLoading,
 				chunkFilename: output.chunkFilename,
 				crossOriginLoading: output.crossOriginLoading,
-				cssHeadDataCompression: output.cssHeadDataCompression,
 				cssFilename: output.cssFilename,
 				cssChunkFilename: output.cssChunkFilename,
 				hotUpdateMainFilename: output.hotUpdateMainFilename,
@@ -213,7 +219,8 @@ export const getNormalizedRspackOptions = (
 					output.devtoolFallbackModuleFilenameTemplate,
 				chunkLoadTimeout: output.chunkLoadTimeout,
 				charset: output.charset,
-				environment: cloneObject(output.environment)
+				environment: cloneObject(output.environment),
+				compareBeforeEmit: output.compareBeforeEmit
 			};
 		}),
 		resolve: nestedConfig(config.resolve, resolve => ({
@@ -306,15 +313,68 @@ export const getNormalizedRspackOptions = (
 		plugins: nestedArray(config.plugins, p => [...p]),
 		experiments: nestedConfig(config.experiments, experiments => ({
 			...experiments,
+			cache: optionalNestedConfig(experiments.cache, cache => {
+				if (typeof cache === "boolean") {
+					return cache;
+				}
+				if (cache.type === "memory") {
+					return cache;
+				}
+				const snapshot = cache.snapshot || {};
+				return {
+					type: "persistent",
+					buildDependencies: nestedArray(cache.buildDependencies, deps =>
+						deps.map(d => path.resolve(config.context || process.cwd(), d))
+					),
+					version: cache.version || "",
+					snapshot: {
+						immutablePaths: nestedArray(snapshot.immutablePaths, p => [...p]),
+						unmanagedPaths: nestedArray(snapshot.unmanagedPaths, p => [...p]),
+						managedPaths: optionalNestedArray(snapshot.managedPaths, p => [
+							...p
+						]) || [/\/node_modules\//]
+					},
+					storage: {
+						type: "filesystem",
+						directory: path.resolve(
+							config.context || process.cwd(),
+							cache.storage?.directory || "node_modules/.cache/rspack"
+						)
+					}
+				};
+			}),
 			lazyCompilation: optionalNestedConfig(
 				experiments.lazyCompilation,
 				options => (options === true ? {} : options)
-			)
+			),
+			incremental: optionalNestedConfig(experiments.incremental, options =>
+				options === true
+					? ({
+							make: true,
+							inferAsyncModules: true,
+							providedExports: true,
+							dependenciesDiagnostics: true,
+							sideEffects: true,
+							buildChunkGraph: true,
+							moduleIds: true,
+							chunkIds: true,
+							modulesHashes: true,
+							modulesCodegen: true,
+							modulesRuntimeRequirements: true,
+							chunksRuntimeRequirements: true,
+							chunksHashes: true,
+							chunksRender: true,
+							emitAssets: true
+						} satisfies Incremental)
+					: options
+			),
+			parallelCodeSplitting: experiments.parallelCodeSplitting
 		})),
 		watch: config.watch,
 		watchOptions: cloneObject(config.watchOptions),
 		devServer: config.devServer,
 		profile: config.profile,
+		amd: config.amd,
 		bail: config.bail
 	};
 };
@@ -442,18 +502,21 @@ export type EntryNormalized = EntryDynamicNormalized | EntryStaticNormalized;
 export interface EntryStaticNormalized {
 	[k: string]: EntryDescriptionNormalized;
 }
-export interface EntryDescriptionNormalized {
+
+export type EntryDescriptionNormalized = Pick<
+	EntryDescription,
+	| "runtime"
+	| "chunkLoading"
+	| "asyncChunks"
+	| "publicPath"
+	| "baseUri"
+	| "filename"
+	| "library"
+	| "layer"
+> & {
 	import?: string[];
-	runtime?: EntryRuntime;
-	chunkLoading?: ChunkLoading;
-	asyncChunks?: AsyncChunks;
-	publicPath?: PublicPath;
-	baseUri?: BaseUri;
-	filename?: EntryFilename;
-	library?: LibraryOptions;
 	dependOn?: string[];
-	layer?: Layer;
-}
+};
 
 export interface OutputNormalized {
 	path?: Path;
@@ -502,7 +565,7 @@ export interface OutputNormalized {
 	environment?: Environment;
 	charset?: boolean;
 	chunkLoadTimeout?: number;
-	cssHeadDataCompression?: boolean;
+	compareBeforeEmit?: boolean;
 }
 
 export interface ModuleOptionsNormalized {
@@ -513,13 +576,36 @@ export interface ModuleOptionsNormalized {
 	noParse?: NoParseOption;
 }
 
+export type ExperimentCacheNormalized =
+	| boolean
+	| {
+			type: "memory";
+	  }
+	| {
+			type: "persistent";
+			buildDependencies: string[];
+			version: string;
+			snapshot: {
+				immutablePaths: Array<string | RegExp>;
+				unmanagedPaths: Array<string | RegExp>;
+				managedPaths: Array<string | RegExp>;
+			};
+			storage: {
+				type: "filesystem";
+				directory: string;
+			};
+	  };
+
 export interface ExperimentsNormalized {
+	cache?: ExperimentCacheNormalized;
 	lazyCompilation?: false | LazyCompilationOptions;
 	asyncWebAssembly?: boolean;
 	outputModule?: boolean;
 	topLevelAwait?: boolean;
 	css?: boolean;
 	layers?: boolean;
+	incremental?: false | Incremental;
+	parallelCodeSplitting?: boolean;
 	futureDefaults?: boolean;
 	rspackFuture?: RspackFutureOptions;
 }
@@ -565,5 +651,6 @@ export interface RspackOptionsNormalized {
 	ignoreWarnings?: IgnoreWarningsNormalized;
 	performance?: Performance;
 	profile?: Profile;
+	amd?: Amd;
 	bail?: Bail;
 }

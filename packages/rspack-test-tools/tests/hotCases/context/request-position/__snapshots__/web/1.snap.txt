@@ -7,7 +7,7 @@
 - Bundle: bundle.js
 - Bundle: lib_a_js.chunk.CURRENT_HASH.js
 - Manifest: main.LAST_HASH.hot-update.json, size: 28
-- Update: main.LAST_HASH.hot-update.js, size: 613
+- Update: main.LAST_HASH.hot-update.js, size: 601
 
 ## Manifest
 
@@ -36,12 +36,12 @@ self["webpackHotUpdate"]('main', {
 "./file.js": (function (__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 __webpack_require__.r(__webpack_exports__);
 __webpack_require__.d(__webpack_exports__, {
-  fn: function() { return fn; }
+  fn: () => (fn)
 });
 const fn = async function () {
   const name = "a";
   const wrap = v => v;
-  return wrap((await __webpack_require__(/*! ./lib */ "./lib lazy recursive ^/.//.*/.js$")(`./${name}.js`)));
+  return wrap((await __webpack_require__(/*! ./lib */ "./lib lazy recursive ^\\.\\/.*\\.js$")(`./${name}.js`)));
 }
 
 

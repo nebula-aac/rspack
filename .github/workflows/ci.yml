@@ -21,9 +21,18 @@ on:
     tags-ignore:
       - "**"
 
+env:
+  # Since CI builds are more akin to from-scratch builds, incremental compilation adds unnecessary dependency-tracking and IO overhead, reducing caching effectiveness.
+  # https://github.com/rust-lang/rust-analyzer/blob/25368d24308d6a94ffe8b99f0122bcf5a2175322/.github/workflows/ci.yaml#L11
+  CARGO_INCREMENTAL: 0
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.ref_name != 'main' }}
+
+permissions:
+  # Allow commenting on issues for `reusable-build.yml`
+  issues: write
 
 jobs:
   get-runner-labels:
@@ -61,9 +70,10 @@ jobs:
     uses: ./.github/workflows/reusable-build.yml
     with:
       target: x86_64-unknown-linux-gnu
-      profile: "debug"
+      native: ${{ needs.get-runner-labels.outputs.LINUX_RUNNER_LABELS == '"ubuntu-22.04"' }}
       runner: ${{ needs.get-runner-labels.outputs.LINUX_RUNNER_LABELS }}
       skipable: ${{ needs.check-changed.outputs.changed != 'true' }}
+      bench: true
 
   test-release-linux:
     name: Test Release Linux
@@ -159,7 +169,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: crate-ci/typos@v1.23.6
+      - uses: crate-ci/typos@v1.29.4
         with:
           files: .
 
@@ -267,7 +277,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --workspace --all-targets -- -D warnings
+          args: --workspace --all-targets --tests -- -D warnings
 
       - name: Run rustfmt
         uses: actions-rs/cargo@v1
@@ -288,7 +298,7 @@ jobs:
       - uses: ./.github/actions/rustup
         with:
           shared-key: check
-      - uses: cargo-bins/cargo-binstall@v1.10.2
+      - uses: cargo-bins/cargo-binstall@v1.10.22
       - run: cargo binstall --no-confirm cargo-shear
       - run: cargo shear
 
@@ -318,61 +328,44 @@ jobs:
 
       - name: Run test
         # reason for excluding https://github.com/napi-rs/napi-rs/issues/2200
-        run: cargo test --workspace --exclude rspack_binding_options --exclude rspack_node -- --nocapture
+        run: cargo test --workspace --exclude rspack_node -- --nocapture
 
-  run_benchmark:
-    name: Run benchmark
-    runs-on: ubuntu-latest
-    if: github.ref_name == 'main' && github.repository_owner == 'web-infra-dev'
+  rust_test_miri:
+    name: Rust test miri
+    needs: [get-runner-labels, rust_changes]
+    # TODO: enable it after self hosted runners are ready
+    # if: needs.rust_changes.outputs.changed == 'true' && github.ref_name == 'main' && github.repository_owner == 'web-infra-dev'
+    if: false
+    runs-on: ${{ fromJSON(needs.get-runner-labels.outputs.LINUX_RUNNER_LABELS) }}
     steps:
-      - name: Run Benchmark
-        uses: convictional/trigger-workflow-and-wait@v1.6.5
-        with:
-          owner: ${{ github.repository_owner }}
-          repo: "rspack-ecosystem-benchmark"
-          workflow_file_name: "bench_rspack_commit.yml"
-          github_token: ${{ secrets.RSPACK_ACCESS_TOKEN }}
-          ref: "main"
-          client_payload: '{"commit_sha":"${{ github.sha }}"}'
+      - uses: actions/checkout@v4
 
-  run_ecosystem_ci:
-    name: Run Ecosystem CI
-    runs-on: ubuntu-latest
-    if: github.ref_name == 'main' && github.repository_owner == 'web-infra-dev'
-    steps:
-      - name: Run Ecosystem CI
-        id: eco_ci
-        continue-on-error: true
-        uses: convictional/trigger-workflow-and-wait@v1.6.5
-        with:
-          owner: ${{ github.repository_owner }}
-          repo: "rspack-ecosystem-ci"
-          workflow_file_name: "ecosystem-ci-from-commit.yml"
-          github_token: ${{ secrets.RSPACK_ACCESS_TOKEN }}
-          ref: "main"
-          client_payload: '{"commitSHA":"${{ github.sha }}","repo":"web-infra-dev/rspack","suite":"-","suiteRefType":"precoded","suiteRef":"precoded"}'
+      - name: Pnpm Cache # Required by some tests
+        uses: ./.github/actions/pnpm-cache
 
-      - if: steps.eco_ci.outcome == 'failure'
-        uses: actions/checkout@v4
-      - if: steps.eco_ci.outcome == 'failure'
-        uses: actions/setup-node@v4
+      - name: Install Rust Toolchain
+        uses: ./.github/actions/rustup
         with:
-          node-version: 20
-      - name: Send Failure Notification
-        if: steps.eco_ci.outcome == 'failure'
+          save-cache: ${{ github.ref_name == 'main' }}
+          shared-key: check
+          miri: true
+
+      # Compile test without debug info for reducing the CI cache size
+      - name: Change profile.test
         shell: bash
-        run: ./scripts/alert/lark.js
+        run: |
+          echo '[profile.test]' >> Cargo.toml
+          echo 'debug = false' >> Cargo.toml
+
+      - name: Run test
         env:
-          TITLE: Ecosystem CI failed on main branch
-          DESCRIPTION: |
-            commitID: [${{github.sha}}](${{github.server_url}}/${{github.repository}}/commit/${{github.sha}})
-          URL: ${{github.server_url}}/${{github.repository}}/actions/runs/${{github.run_id}}
-          LARK_WEBHOOK_URL: ${{secrets.LARK_WEBHOOK_URL}}
+          MIRIFLAGS: -Zmiri-tree-borrows -Zmiri-disable-isolation
+        # reason for excluding https://github.com/napi-rs/napi-rs/issues/2200
+        run: cargo miri test --workspace --exclude rspack_node -- --nocapture
 
   failure_notification:
     name: Failure Notification
-    needs:
-      [test-linux, test-windows, test-mac, rust_check, rust_test, run_benchmark]
+    needs: [test-linux, test-windows, test-mac, rust_check, rust_test]
     if: ${{ failure() && !cancelled() && github.ref_name == 'main' && github.repository_owner == 'web-infra-dev' }}
     runs-on: ubuntu-latest
     steps:
@@ -388,3 +381,17 @@ jobs:
             commitID: [${{github.sha}}](${{github.server_url}}/${{github.repository}}/commit/${{github.sha}})
           URL: ${{github.server_url}}/${{github.repository}}/actions/runs/${{github.run_id}}
           LARK_WEBHOOK_URL: ${{secrets.LARK_WEBHOOK_URL}}
+
+  # TODO: enable it after self hosted runners are ready
+  # pkg-preview:
+  #   name: Pkg Preview
+  #   needs:
+  #     - test-linux
+  #     - test-windows
+  #     - cargo-deny
+  #     - lint
+  #     - rust_check
+  #     - rust_test
+  #   # after merged to main branch
+  #   if: ${{ !failure() && github.event_name == 'push' }}
+  #   uses: ./.github/workflows/preview-commit.yml

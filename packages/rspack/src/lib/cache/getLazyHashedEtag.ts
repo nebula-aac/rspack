@@ -28,7 +28,7 @@ class LazyHashedEtag {
 	 */
 	constructor(
 		obj: HashableObject,
-		hashFunction: string | HashConstructor = "md4"
+		hashFunction: string | HashConstructor = "xxhash64"
 	) {
 		this._obj = obj;
 		this._hash = undefined;
@@ -65,9 +65,9 @@ const mapObjects = new WeakMap<
  */
 export const getter = (
 	obj: HashableObject,
-	hashFunction: string | HashConstructor = "md4"
+	hashFunction: string | HashConstructor = "xxhash64"
 ): LazyHashedEtag => {
-	let innerMap;
+	let innerMap: WeakMap<HashableObject, LazyHashedEtag> | undefined;
 	if (typeof hashFunction === "string") {
 		innerMap = mapStrings.get(hashFunction);
 		if (innerMap === undefined) {

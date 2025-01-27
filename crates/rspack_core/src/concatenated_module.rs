@@ -11,13 +11,19 @@ use indexmap::IndexMap;
 use rayon::prelude::*;
 use regex::Regex;
 use rspack_ast::javascript::Ast;
+use rspack_cacheable::{
+  cacheable, cacheable_dyn,
+  with::{AsMap, Skip},
+};
 use rspack_collections::{
   Identifiable, Identifier, IdentifierIndexMap, IdentifierIndexSet, IdentifierMap, IdentifierSet,
 };
 use rspack_error::{Diagnosable, Diagnostic, DiagnosticKind, Result, TraceableError};
 use rspack_hash::{HashDigest, HashFunction, RspackHash};
 use rspack_hook::define_hook;
-use rspack_sources::{CachedSource, ConcatSource, RawSource, ReplaceSource, Source, SourceExt};
+use rspack_sources::{
+  CachedSource, ConcatSource, RawStringSource, ReplaceSource, Source, SourceExt,
+};
 use rspack_util::{ext::DynHash, itoa, source_map::SourceMapKind, swc::join_atom};
 use rustc_hash::FxHasher;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
@@ -38,31 +44,33 @@ use crate::{
   reserved_names::RESERVED_NAMES, returning_function, runtime_condition_expression,
   subtract_runtime_condition, to_identifier, AsyncDependenciesBlockIdentifier, BoxDependency,
   BuildContext, BuildInfo, BuildMeta, BuildMetaDefaultObject, BuildMetaExportsType, BuildResult,
-  ChunkInitFragments, CodeGenerationDataTopLevelDeclarations, CodeGenerationExportsFinalNames,
-  CodeGenerationResult, Compilation, ConcatenatedModuleIdent, ConcatenationScope, ConnectionId,
-  ConnectionState, Context, DependenciesBlock, DependencyId, DependencyTemplate, DependencyType,
-  ErrorSpan, ExportInfo, ExportInfoProvided, ExportsArgument, ExportsType, FactoryMeta,
-  IdentCollector, LibIdentOptions, Module, ModuleDependency, ModuleGraph, ModuleGraphConnection,
-  ModuleIdentifier, ModuleLayer, ModuleType, Resolve, RuntimeCondition, RuntimeGlobals,
-  RuntimeSpec, SourceType, SpanExt, Template, UsageState, UsedName, DEFAULT_EXPORT,
+  ChunkGraph, ChunkInitFragments, CodeGenerationDataTopLevelDeclarations,
+  CodeGenerationExportsFinalNames, CodeGenerationPublicPathAutoReplace, CodeGenerationResult,
+  Compilation, ConcatenatedModuleIdent, ConcatenationScope, ConnectionState, Context,
+  DependenciesBlock, DependencyId, DependencyTemplate, DependencyType, ErrorSpan,
+  ExportInfoProvided, ExportsArgument, ExportsType, FactoryMeta, IdentCollector, LibIdentOptions,
+  MaybeDynamicTargetExportInfoHashKey, Module, ModuleDependency, ModuleGraph,
+  ModuleGraphConnection, ModuleIdentifier, ModuleLayer, ModuleType, Resolve, RuntimeCondition,
+  RuntimeGlobals, RuntimeSpec, SourceType, SpanExt, Template, UsageState, UsedName, DEFAULT_EXPORT,
   NAMESPACE_OBJECT_EXPORT,
 };
 
 type ExportsDefinitionArgs = Vec<(String, String)>;
-define_hook!(ConcatenatedModuleExportsDefinitions: SyncSeriesBail(exports_definitions: &mut ExportsDefinitionArgs) -> bool);
+define_hook!(ConcatenatedModuleExportsDefinitions: SyncSeriesBail(exports_definitions: &mut ExportsDefinitionArgs, is_entry_module: bool) -> bool);
 
 #[derive(Debug, Default)]
 pub struct ConcatenatedModuleHooks {
   pub exports_definitions: ConcatenatedModuleExportsDefinitionsHook,
 }
 
+#[cacheable]
 #[derive(Debug)]
 pub struct RootModuleContext {
   pub id: ModuleIdentifier,
   pub readable_identifier: String,
   pub name_for_condition: Option<Box<str>>,
   pub lib_indent: Option<String>,
-  pub resolve_options: Option<Box<Resolve>>,
+  pub resolve_options: Option<Arc<Resolve>>,
   pub code_generation_dependencies: Option<Vec<Box<dyn ModuleDependency>>>,
   pub presentational_dependencies: Option<Vec<Box<dyn DependencyTemplate>>>,
   pub context: Option<Context>,
@@ -105,6 +113,7 @@ pub enum BindingType {
   Symbol,
 }
 
+#[cacheable]
 #[derive(Debug, Clone)]
 pub struct ConcatenatedInnerModule {
   pub id: ModuleIdentifier,
@@ -140,22 +149,22 @@ struct ConcatenationEntryConcatenated {
 
 #[derive(Debug)]
 struct ConcatenationEntryExternal {
-  connection: ConnectionId,
+  dependency: DependencyId,
   runtime_condition: RuntimeCondition,
 }
 
 impl ConcatenationEntryExternal {
   pub fn module(&self, mg: &ModuleGraph) -> ModuleIdentifier {
     let con = mg
-      .connection_by_connection_id(&self.connection)
+      .connection_by_dependency_id(&self.dependency)
       .expect("should have connection");
     *con.module_identifier()
   }
 }
 
 #[derive(Debug)]
-pub struct ConcatenatedModuleImportInfo {
-  connection: ModuleGraphConnection,
+pub struct ConcatenatedModuleImportInfo<'a> {
+  connection: &'a ModuleGraphConnection,
   source_order: i32,
   range_start: Option<u32>,
 }
@@ -185,6 +194,8 @@ pub struct ConcatenatedModuleInfo {
   pub global_scope_ident: Vec<ConcatenatedModuleIdent>,
   pub idents: Vec<ConcatenatedModuleIdent>,
   pub binding_to_ref: HashMap<(Atom, SyntaxContext), Vec<ConcatenatedModuleIdent>>,
+
+  pub public_path_auto_replace: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -201,15 +212,15 @@ pub struct ExternalModuleInfo {
   pub name: Option<Atom>,
 }
 
-pub struct ConnectionWithRuntimeCondition {
-  pub connection: ModuleGraphConnection,
+pub struct ConnectionWithRuntimeCondition<'a> {
+  pub connection: &'a ModuleGraphConnection,
   pub runtime_condition: RuntimeCondition,
 }
 
 #[derive(Debug, Clone)]
 pub enum ModuleInfo {
   External(ExternalModuleInfo),
-  Concatenated(ConcatenatedModuleInfo),
+  Concatenated(Box<ConcatenatedModuleInfo>),
 }
 
 impl ModuleInfo {
@@ -347,6 +358,7 @@ impl ModuleInfo {
 }
 
 #[impl_source_map_config]
+#[cacheable]
 #[derive(Debug)]
 pub struct ConcatenatedModule {
   id: ModuleIdentifier,
@@ -357,9 +369,9 @@ pub struct ConcatenatedModule {
 
   blocks: Vec<AsyncDependenciesBlockIdentifier>,
   dependencies: Vec<DependencyId>,
-
+  #[cacheable(with=AsMap)]
   cached_source_sizes: DashMap<SourceType, f64, BuildHasherDefault<FxHasher>>,
-
+  #[cacheable(with=Skip)]
   diagnostics: Mutex<Vec<Diagnostic>>,
   build_info: Option<BuildInfo>,
 }
@@ -451,11 +463,16 @@ impl DependenciesBlock for ConcatenatedModule {
     self.dependencies.push(dependency)
   }
 
+  fn remove_dependency_id(&mut self, dependency: DependencyId) {
+    self.dependencies.retain(|d| d != &dependency)
+  }
+
   fn get_dependencies(&self) -> &[DependencyId] {
     &self.dependencies
   }
 }
 
+#[cacheable_dyn]
 #[async_trait::async_trait]
 impl Module for ConcatenatedModule {
   fn module_type(&self) -> &ModuleType {
@@ -512,7 +529,7 @@ impl Module for ConcatenatedModule {
     ))
   }
 
-  fn size(&self, source_type: Option<&SourceType>, _compilation: &Compilation) -> f64 {
+  fn size(&self, source_type: Option<&SourceType>, _compilation: Option<&Compilation>) -> f64 {
     if let Some(size_ref) = source_type.and_then(|st| self.cached_source_sizes.get(st)) {
       *size_ref
     } else {
@@ -525,7 +542,7 @@ impl Module for ConcatenatedModule {
   /// the compilation is asserted to be `Some(Compilation)`, https://github.com/webpack/webpack/blob/1f99ad6367f2b8a6ef17cce0e058f7a67fb7db18/lib/optimize/ModuleConcatenationPlugin.js#L394-L418
   async fn build(
     &mut self,
-    _build_context: BuildContext<'_>,
+    _build_context: BuildContext,
     compilation: Option<&Compilation>,
   ) -> Result<BuildResult> {
     let compilation = compilation.expect("should pass compilation");
@@ -539,7 +556,7 @@ impl Module for ConcatenatedModule {
       context_dependencies: Default::default(),
       missing_dependencies: Default::default(),
       build_dependencies: Default::default(),
-      harmony_named_exports: Default::default(),
+      esm_named_exports: Default::default(),
       all_star_exports: Default::default(),
       need_create_require: Default::default(),
       json_data: Default::default(),
@@ -571,7 +588,7 @@ impl Module for ConcatenatedModule {
           .dependency_by_id(dep_id)
           .expect("should have dependency");
         let module_id_of_dep = module_graph.module_identifier_by_dependency_id(dep_id);
-        if !is_harmony_dep_like(dep) || !modules.contains(&module_id_of_dep) {
+        if !is_esm_dep_like(dep) || !modules.contains(&module_id_of_dep) {
           self.dependencies.push(*dep_id);
         }
       }
@@ -603,7 +620,7 @@ impl Module for ConcatenatedModule {
     Ok(BuildResult::default())
   }
 
-  #[tracing::instrument(name = "ConcatenatedModule::code_generation", skip_all, fields(identifier = ?self.identifier()))]
+  // #[tracing::instrument("ConcatenatedModule::code_generation", skip_all, fields(identifier = ?self.identifier()))]
   fn code_generation(
     &self,
     compilation: &Compilation,
@@ -658,6 +675,7 @@ impl Module for ConcatenatedModule {
 
     let mut all_used_names: HashSet<Atom> = RESERVED_NAMES.iter().map(|s| Atom::new(*s)).collect();
     let mut top_level_declarations: HashSet<Atom> = HashSet::default();
+    let mut public_path_auto_replace: bool = false;
 
     for module_info_id in modules_with_info.iter() {
       let Some(ModuleInfo::Concatenated(info)) = module_to_info_map.get_mut(module_info_id) else {
@@ -728,7 +746,6 @@ impl Module for ConcatenatedModule {
             if all_used_names.contains(name) {
               // Find a new name and update references
               let new_name = find_new_name(name, &all_used_names, None, &readable_identifier);
-              // dbg!(&name, &new_name);
               all_used_names.insert(new_name.clone());
               info.internal_names.insert(name.clone(), new_name.clone());
               top_level_declarations.insert(new_name.clone());
@@ -741,7 +758,7 @@ impl Module for ConcatenatedModule {
                 let low = span.real_lo();
                 let high = span.real_hi();
                 if identifier.shorthand {
-                  source.insert(high, &format!(": {}", new_name), None);
+                  source.insert(high, &format!(": {new_name}"), None);
                   continue;
                 }
 
@@ -751,6 +768,21 @@ impl Module for ConcatenatedModule {
               // Handle the case when the name is not already used
               all_used_names.insert(name.clone());
               info.internal_names.insert(name.clone(), name.clone());
+              top_level_declarations.insert(name.clone());
+            }
+          }
+
+          // Handle the name passed through by namespace_export_symbol
+          if let Some(ref namespace_export_symbol) = info.namespace_export_symbol {
+            if namespace_export_symbol.starts_with(NAMESPACE_OBJECT_EXPORT)
+              && namespace_export_symbol.len() > NAMESPACE_OBJECT_EXPORT.len()
+            {
+              let name =
+                Atom::from(namespace_export_symbol[NAMESPACE_OBJECT_EXPORT.len()..].to_string());
+              all_used_names.insert(name.clone());
+              info
+                .internal_names
+                .insert(namespace_export_symbol.clone(), name.clone());
               top_level_declarations.insert(name.clone());
             }
           }
@@ -772,7 +804,11 @@ impl Module for ConcatenatedModule {
             info.namespace_object_name = Some(namespace_object_name.clone());
             top_level_declarations.insert(namespace_object_name);
           }
-          // dbg!(info.module, &info.internal_names);
+
+          // Handle publicPathAutoReplace for perf
+          if let Some(info_auto) = info.public_path_auto_replace {
+            public_path_auto_replace = public_path_auto_replace || info_auto;
+          }
         }
 
         // Handle external type
@@ -848,7 +884,7 @@ impl Module for ConcatenatedModule {
                 .collect::<Vec<_>>(),
               match_info.call,
               !match_info.direct_import,
-              build_meta.strict_harmony_module,
+              build_meta.strict_esm_module,
               match_info.asi_safe,
             ));
           }
@@ -864,7 +900,7 @@ impl Module for ConcatenatedModule {
         export_name,
         call,
         call_context,
-        strict_harmony_module,
+        strict_esm_module,
         asi_safe,
       ) in info_params_list
       {
@@ -877,7 +913,7 @@ impl Module for ConcatenatedModule {
           &mut needed_namespace_objects,
           call,
           call_context,
-          strict_harmony_module,
+          strict_esm_module,
           asi_safe,
           &context,
         );
@@ -908,9 +944,9 @@ impl Module for ConcatenatedModule {
     let root_module = module_graph
       .module_by_identifier(&root_module_id)
       .expect("should have box module");
-    let strict_harmony_module = root_module
+    let strict_esm_module = root_module
       .build_meta()
-      .map(|item| item.strict_harmony_module)
+      .map(|item| item.strict_esm_module)
       .unwrap_or_default();
 
     let exports_info = module_graph.get_exports_info(&root_module_id);
@@ -943,7 +979,7 @@ impl Module for ConcatenatedModule {
           &mut needed_namespace_objects,
           false,
           false,
-          strict_harmony_module,
+          strict_esm_module,
           Some(true),
           &compilation.options.context,
         );
@@ -961,9 +997,9 @@ impl Module for ConcatenatedModule {
     }
 
     let mut result = ConcatSource::default();
-    let mut should_add_harmony_flag = false;
+    let mut should_add_esm_flag = false;
 
-    // Add harmony compatibility flag (must be first because of possible circular dependencies)
+    // Add ESM compatibility flag (must be first because of possible circular dependencies)
     if compilation
       .get_module_graph()
       .get_exports_info(&self.id())
@@ -971,7 +1007,7 @@ impl Module for ConcatenatedModule {
       .get_used(&module_graph, runtime)
       != UsageState::Unused
     {
-      should_add_harmony_flag = true
+      should_add_esm_flag = true
     }
 
     // Assuming the necessary imports and dependencies are declared
@@ -979,7 +1015,6 @@ impl Module for ConcatenatedModule {
     // Define exports
     if !exports_map.is_empty() {
       let mut definitions = Vec::new();
-      // dbg!(&exports_map);
       for (key, value) in exports_map.iter() {
         definitions.push(format!(
           "\n  {}: {}",
@@ -996,22 +1031,25 @@ impl Module for ConcatenatedModule {
         .plugin_driver
         .concatenated_module_hooks
         .exports_definitions
-        .call(&mut exports_final_names)?;
+        .call(
+          &mut exports_final_names,
+          compilation.chunk_graph.is_entry_module(&self.id),
+        )?;
 
       if !matches!(should_skip_render_definitions, Some(true)) {
         runtime_requirements.insert(RuntimeGlobals::EXPORTS);
         runtime_requirements.insert(RuntimeGlobals::DEFINE_PROPERTY_GETTERS);
 
-        if should_add_harmony_flag {
-          result.add(RawSource::from("// ESM COMPAT FLAG\n"));
-          result.add(RawSource::from(define_es_module_flag_statement(
+        if should_add_esm_flag {
+          result.add(RawStringSource::from_static("// ESM COMPAT FLAG\n"));
+          result.add(RawStringSource::from(define_es_module_flag_statement(
             self.get_exports_argument(),
             &mut runtime_requirements,
           )));
         }
 
-        result.add(RawSource::from("\n// EXPORTS\n"));
-        result.add(RawSource::from(format!(
+        result.add(RawStringSource::from_static("\n// EXPORTS\n"));
+        result.add(RawStringSource::from(format!(
           "{}({}, {{{}\n}});\n",
           RuntimeGlobals::DEFINE_PROPERTY_GETTERS,
           exports_argument,
@@ -1022,7 +1060,7 @@ impl Module for ConcatenatedModule {
 
     // List unused exports
     if !unused_exports.is_empty() {
-      result.add(RawSource::from(format!(
+      result.add(RawStringSource::from(format!(
         "\n// UNUSED EXPORTS: {}\n",
         join_atom(unused_exports.iter(), ", ")
       )));
@@ -1056,9 +1094,9 @@ impl Module for ConcatenatedModule {
           .module_by_identifier(module_info_id)
           .expect("should have box module");
         let module_readable_identifier = box_module.readable_identifier(&context);
-        let strict_harmony_module = box_module
+        let strict_esm_module = box_module
           .build_meta()
-          .map(|meta| meta.strict_harmony_module)
+          .map(|meta| meta.strict_esm_module)
           .unwrap_or_default();
         let name_space_name = module_info.namespace_object_name.clone();
 
@@ -1089,7 +1127,7 @@ impl Module for ConcatenatedModule {
               &mut needed_namespace_objects,
               false,
               false,
-              strict_harmony_module,
+              strict_esm_module,
               Some(true),
               &context,
             );
@@ -1144,7 +1182,7 @@ impl Module for ConcatenatedModule {
       };
 
       if let Some(source) = namespace_object_sources.get(&info.module) {
-        result.add(RawSource::from(source.as_str()));
+        result.add(RawStringSource::from(source.as_str()));
       }
     }
 
@@ -1165,12 +1203,8 @@ impl Module for ConcatenatedModule {
 
       match info {
         ModuleInfo::Concatenated(info) => {
-          result.add(RawSource::from(
-            format!(
-              "\n;// CONCATENATED MODULE: {}\n",
-              module_readable_identifier
-            )
-            .as_str(),
+          result.add(RawStringSource::from(
+            format!("\n;// CONCATENATED MODULE: {module_readable_identifier}\n").as_str(),
           ));
           // https://github.com/webpack/webpack/blob/ac7e531436b0d47cd88451f497cdfd0dad41535d/lib/optimize/ConcatenatedModule.js#L1582
           result.add(info.source.clone().expect("should have source"));
@@ -1183,9 +1217,8 @@ impl Module for ConcatenatedModule {
           name = info.namespace_object_name.clone();
         }
         ModuleInfo::External(info) => {
-          result.add(RawSource::from(format!(
-            "\n// EXTERNAL MODULE: {}\n",
-            module_readable_identifier
+          result.add(RawStringSource::from(format!(
+            "\n// EXTERNAL MODULE: {module_readable_identifier}\n"
           )));
 
           runtime_requirements.insert(RuntimeGlobals::REQUIRE);
@@ -1201,15 +1234,18 @@ impl Module for ConcatenatedModule {
 
           if condition != "true" {
             is_conditional = true;
-            result.add(RawSource::from(format!("if ({}) {{\n", condition)));
+            result.add(RawStringSource::from(format!("if ({condition}) {{\n")));
           }
 
-          result.add(RawSource::from(format!(
+          result.add(RawStringSource::from(format!(
             "var {} = {}({});",
             info.name.as_ref().expect("should have name"),
             RuntimeGlobals::REQUIRE,
-            serde_json::to_string(&compilation.chunk_graph.get_module_id(info.module))
-              .expect("should have module id")
+            serde_json::to_string(
+              ChunkGraph::get_module_id(&compilation.module_ids_artifact, info.module)
+                .expect("should have module id")
+            )
+            .expect("should json stringify module id")
           )));
 
           name = info.name.clone();
@@ -1218,7 +1254,7 @@ impl Module for ConcatenatedModule {
 
       if info.get_interop_namespace_object_used() {
         runtime_requirements.insert(RuntimeGlobals::CREATE_FAKE_NAMESPACE_OBJECT);
-        result.add(RawSource::from(format!(
+        result.add(RawStringSource::from(format!(
           "\nvar {} = /*#__PURE__*/{}({}, 2);",
           info
             .get_interop_namespace_object_name()
@@ -1230,7 +1266,7 @@ impl Module for ConcatenatedModule {
 
       if info.get_interop_namespace_object2_used() {
         runtime_requirements.insert(RuntimeGlobals::CREATE_FAKE_NAMESPACE_OBJECT);
-        result.add(RawSource::from(format!(
+        result.add(RawStringSource::from(format!(
           "\nvar {} = /*#__PURE__*/{}({});",
           info
             .get_interop_namespace_object2_name()
@@ -1242,7 +1278,7 @@ impl Module for ConcatenatedModule {
 
       if info.get_interop_default_access_used() {
         runtime_requirements.insert(RuntimeGlobals::COMPAT_GET_DEFAULT_EXPORT);
-        result.add(RawSource::from(format!(
+        result.add(RawStringSource::from(format!(
           "\nvar {} = /*#__PURE__*/{}({});",
           info
             .get_interop_default_access_name()
@@ -1253,7 +1289,7 @@ impl Module for ConcatenatedModule {
       }
 
       if is_conditional {
-        result.add(RawSource::from("\n}"));
+        result.add(RawStringSource::from_static("\n}"));
       }
     }
 
@@ -1261,6 +1297,13 @@ impl Module for ConcatenatedModule {
     code_generation_result.add(SourceType::JavaScript, CachedSource::new(result).boxed());
     code_generation_result.chunk_init_fragments = chunk_init_fragments;
     code_generation_result.runtime_requirements = runtime_requirements;
+
+    if public_path_auto_replace {
+      code_generation_result
+        .data
+        .insert(CodeGenerationPublicPathAutoReplace(true));
+    }
+
     code_generation_result
       .data
       .insert(CodeGenerationDataTopLevelDeclarations::new(
@@ -1277,6 +1320,11 @@ impl Module for ConcatenatedModule {
           exports_final_names_map,
         ));
     }
+    code_generation_result.set_hash(
+      &compilation.options.output.hash_function,
+      &compilation.options.output.hash_digest,
+      &compilation.options.output.hash_salt,
+    );
     Ok(code_generation_result)
   }
 
@@ -1312,10 +1360,11 @@ impl Module for ConcatenatedModule {
           .expect("should have module")
           .update_hash(hasher, compilation, generation_runtime)?,
         ConcatenationEntry::External(e) => {
-          compilation
-            .chunk_graph
-            .get_module_id(e.module(&compilation.get_module_graph()))
-            .dyn_hash(hasher);
+          ChunkGraph::get_module_id(
+            &compilation.module_ids_artifact,
+            e.module(&compilation.get_module_graph()),
+          )
+          .dyn_hash(hasher);
         }
       };
     }
@@ -1331,7 +1380,7 @@ impl Module for ConcatenatedModule {
     self.root_module_ctxt.lib_indent.clone().map(Cow::Owned)
   }
 
-  fn get_resolve_options(&self) -> Option<Box<Resolve>> {
+  fn get_resolve_options(&self) -> Option<Arc<Resolve>> {
     self.root_module_ctxt.resolve_options.clone()
   }
 
@@ -1437,7 +1486,7 @@ impl ConcatenatedModule {
                 module: module_id,
                 ..Default::default()
               };
-              vac.insert(ModuleInfo::Concatenated(info));
+              vac.insert(ModuleInfo::Concatenated(Box::new(info)));
               list.push(module_id);
             }
             ConcatenationEntry::External(e) => {
@@ -1502,7 +1551,7 @@ impl ConcatenatedModule {
     module_set: &mut IdentifierIndexSet,
     runtime: Option<&RuntimeSpec>,
     mg: &ModuleGraph,
-    con: ModuleGraphConnection,
+    con: &ModuleGraphConnection,
     runtime_condition: RuntimeCondition,
     exists_entry: &mut IdentifierMap<RuntimeCondition>,
     list: &mut Vec<ConcatenationEntry>,
@@ -1557,31 +1606,24 @@ impl ConcatenatedModule {
           merge_runtime_condition(&last.runtime_condition, &runtime_condition, runtime);
         return;
       }
-      let con_id = mg
-        .connection_id_by_dependency_id(&con.dependency_id)
-        .expect("should have dep id");
       list.push(ConcatenationEntry::External(ConcatenationEntryExternal {
-        connection: *con_id,
+        dependency: con.dependency_id,
         runtime_condition,
       }));
     }
   }
 
-  fn get_concatenated_imports(
+  fn get_concatenated_imports<'a>(
     &self,
     module_id: &ModuleIdentifier,
     root_module_id: &ModuleIdentifier,
     runtime: Option<&RuntimeSpec>,
-    mg: &ModuleGraph,
-  ) -> Vec<ConnectionWithRuntimeCondition> {
-    let mut connections = mg
-      .get_outgoing_connections(module_id)
-      .into_iter()
-      .cloned()
-      .collect::<Vec<_>>();
+    mg: &'a ModuleGraph,
+  ) -> Vec<ConnectionWithRuntimeCondition<'a>> {
+    let mut connections = mg.get_outgoing_connections(module_id).collect::<Vec<_>>();
     if module_id == root_module_id {
       for c in mg.get_outgoing_connections(&self.id) {
-        connections.push(c.clone());
+        connections.push(c);
       }
     }
 
@@ -1591,7 +1633,7 @@ impl ConcatenatedModule {
         let dep = mg
           .dependency_by_id(&connection.dependency_id)
           .expect("should have dependency");
-        if !is_harmony_dep_like(dep) {
+        if !is_esm_dep_like(dep) {
           return None;
         }
 
@@ -1600,14 +1642,14 @@ impl ConcatenatedModule {
         {
           return None;
         }
-        // now the dep should be one of `HarmonyExportImportedSpecifierDependency`, `HarmonyImportSideEffectDependency`, `HarmonyImportSpecifierDependency`,
+        // now the dep should be one of `ESMExportImportedSpecifierDependency`, `ESMImportSideEffectDependency`, `ESMImportSpecifierDependency`,
         // the expect is safe now
         Some(ConcatenatedModuleImportInfo {
           connection,
           source_order: dep
             .source_order()
             .expect("source order should not be empty"),
-          range_start: dep.span().map(|span| span.start),
+          range_start: dep.range().map(|range| range.start),
         })
       })
       .collect::<Vec<_>>();
@@ -1666,15 +1708,16 @@ impl ConcatenatedModule {
     info: ModuleInfo,
     runtime: Option<&RuntimeSpec>,
   ) -> Result<ModuleInfo> {
-    if let ModuleInfo::Concatenated(info) = info {
+    if let ModuleInfo::Concatenated(box info) = info {
       let module_id = info.module;
 
       let concatenation_scope = ConcatenationScope::new(module_info_map, info);
       let module_graph = compilation.get_module_graph();
       let module = module_graph
         .module_by_identifier(&module_id)
-        .unwrap_or_else(|| panic!("should have module {}", module_id));
+        .unwrap_or_else(|| panic!("should have module {module_id}"));
       let codegen_res = module.code_generation(compilation, runtime, Some(concatenation_scope))?;
+
       let CodeGenerationResult {
         mut inner,
         mut chunk_init_fragments,
@@ -1715,21 +1758,19 @@ impl ConcatenatedModule {
         Ok(res) => Program::Module(res),
         Err(err) => {
           let span: ErrorSpan = err.span().into();
-          self
-            .diagnostics
-            .lock()
-            .expect("should have diagnostics")
-            .append(&mut map_box_diagnostics_to_module_parse_diagnostics(vec![
-              rspack_error::TraceableError::from_source_file(
-                &fm,
-                span.start as usize,
-                span.end as usize,
-                "JavaScript parsing error".to_string(),
-                err.kind().msg().to_string(),
-              )
-              .with_kind(DiagnosticKind::JavaScript),
-            ]));
-          return Ok(ModuleInfo::Concatenated(module_info));
+
+          // return empty error as we already push error to compilation.diagnostics
+          return Err(
+            rspack_error::TraceableError::from_source_file(
+              &fm,
+              span.start as usize,
+              span.end as usize,
+              "JavaScript parsing error:\n".to_string(),
+              err.kind().msg().to_string(),
+            )
+            .with_kind(DiagnosticKind::JavaScript)
+            .into(),
+          );
         }
       };
       let mut ast = Ast::new(program, cm, Some(comments));
@@ -1755,7 +1796,13 @@ impl ConcatenatedModule {
       module_info.internal_source = Some(source);
       module_info.source = Some(result_source);
       module_info.chunk_init_fragments = chunk_init_fragments;
-      Ok(ModuleInfo::Concatenated(module_info))
+      if let Some(CodeGenerationPublicPathAutoReplace(true)) = codegen_res
+        .data
+        .get::<CodeGenerationPublicPathAutoReplace>(
+      ) {
+        module_info.public_path_auto_replace = Some(true);
+      }
+      Ok(ModuleInfo::Concatenated(Box::new(module_info)))
     } else {
       Ok(info)
     }
@@ -1771,7 +1818,7 @@ impl ConcatenatedModule {
     needed_namespace_objects: &mut IdentifierIndexSet,
     as_call: bool,
     call_context: bool,
-    strict_harmony_module: bool,
+    strict_esm_module: bool,
     asi_safe: Option<bool>,
     context: &Context,
   ) -> String {
@@ -1783,7 +1830,7 @@ impl ConcatenatedModule {
       runtime,
       needed_namespace_objects,
       as_call,
-      strict_harmony_module,
+      strict_esm_module,
       asi_safe,
       &mut HashSet::default(),
     );
@@ -1821,7 +1868,7 @@ impl ConcatenatedModule {
             info
               .internal_names
               .iter()
-              .map(|(name, symbol)| format!("{}: {}", name, symbol))
+              .map(|(name, symbol)| format!("{name}: {symbol}"))
               .collect::<Vec<String>>()
               .join(", ")
           )
@@ -1838,11 +1885,11 @@ impl ConcatenatedModule {
     };
     if is_property_access && as_call && !call_context {
       return if asi_safe.unwrap_or_default() {
-        format!("(0,{})", reference)
+        format!("(0,{reference})")
       } else if let Some(_asi_safe) = asi_safe {
-        format!(";(0,{})", reference)
+        format!(";(0,{reference})")
       } else {
-        format!("/*#__PURE__*/Object({})", reference)
+        format!("/*#__PURE__*/Object({reference})")
       };
     }
     reference
@@ -1857,9 +1904,9 @@ impl ConcatenatedModule {
     runtime: Option<&RuntimeSpec>,
     needed_namespace_objects: &mut IdentifierIndexSet,
     as_call: bool,
-    strict_harmony_module: bool,
+    strict_esm_module: bool,
     asi_safe: Option<bool>,
-    already_visited: &mut HashSet<ExportInfo>,
+    already_visited: &mut HashSet<MaybeDynamicTargetExportInfoHashKey>,
   ) -> Binding {
     let info = module_to_info_map
       .get(info_id)
@@ -1868,7 +1915,7 @@ impl ConcatenatedModule {
     let module = mg
       .module_by_identifier(&info.id())
       .expect("should have module");
-    let exports_type = module.get_exports_type(mg, strict_harmony_module);
+    let exports_type = module.get_exports_type(mg, strict_esm_module);
 
     if export_name.is_empty() {
       match exports_type {
@@ -1960,13 +2007,13 @@ impl ConcatenatedModule {
               .cloned()
               .expect("should have default access name");
             let default_export = if as_call {
-              format!("{}()", default_access_name)
+              format!("{default_access_name}()")
             } else if let Some(true) = asi_safe {
-              format!("({}())", default_access_name)
+              format!("({default_access_name}())")
             } else if let Some(false) = asi_safe {
-              format!(";({}())", default_access_name)
+              format!(";({default_access_name}())")
             } else {
-              format!("{}.a", default_access_name)
+              format!("{default_access_name}.a")
             };
 
             return Binding::Raw(RawBinding {
@@ -2019,11 +2066,12 @@ impl ConcatenatedModule {
     }
 
     let exports_info = mg.get_exports_info(&info.id());
-    // webpack use get_exports_info here, https://github.com/webpack/webpack/blob/ac7e531436b0d47cd88451f497cdfd0dad41535d/lib/optimize/ConcatenatedModule.js#L377-L377
-    // But in our arch, there is no way to modify module graph during code_generation phase
-    let export_info = exports_info.get_read_only_export_info(mg, &export_name[0]);
+    // webpack use `get_exports_info` here, https://github.com/webpack/webpack/blob/ac7e531436b0d47cd88451f497cdfd0dad41535d/lib/optimize/ConcatenatedModule.js#L377-L377
+    // But in our arch, there is no way to modify module graph during code_generation phase, so we use `get_export_info_without_mut_module_graph` instead.`
+    let export_info = exports_info.get_export_info_without_mut_module_graph(mg, &export_name[0]);
+    let export_info_hash_key = export_info.as_hash_key();
 
-    if already_visited.contains(&export_info) {
+    if already_visited.contains(&export_info_hash_key) {
       return Binding::Raw(RawBinding {
         raw_name: "/* circular reexport */ Object(function x() { x() }())".into(),
         ids: Vec::new(),
@@ -2033,7 +2081,7 @@ impl ConcatenatedModule {
       });
     }
 
-    already_visited.insert(export_info);
+    already_visited.insert(export_info_hash_key);
 
     match info {
       ModuleInfo::Concatenated(info) => {
@@ -2054,7 +2102,6 @@ impl ConcatenatedModule {
             comment: None,
           });
         }
-        // dbg!(&export_id, &info.export_map);
 
         if let Some(ref export_id) = export_id
           && let Some(direct_export) = info.export_map.as_ref().and_then(|map| map.get(export_id))
@@ -2129,7 +2176,7 @@ impl ConcatenatedModule {
                 runtime,
                 needed_namespace_objects,
                 as_call,
-                build_meta.strict_harmony_module,
+                build_meta.strict_esm_module,
                 asi_safe,
                 already_visited,
               );
@@ -2198,7 +2245,7 @@ impl ConcatenatedModule {
   }
 }
 
-pub fn is_harmony_dep_like(dep: &BoxDependency) -> bool {
+pub fn is_esm_dep_like(dep: &BoxDependency) -> bool {
   matches!(
     dep.dependency_type(),
     DependencyType::EsmImportSpecifier

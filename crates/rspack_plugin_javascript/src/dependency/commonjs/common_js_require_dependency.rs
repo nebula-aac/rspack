@@ -1,24 +1,31 @@
-use rspack_core::{module_id, Compilation, RealDependencyLocation, RuntimeSpec};
+use rspack_cacheable::{cacheable, cacheable_dyn, with::Skip};
+use rspack_core::{
+  module_id, Compilation, DependencyLocation, DependencyRange, RuntimeSpec, SharedSourceMap,
+};
 use rspack_core::{AsContextDependency, Dependency, DependencyCategory};
 use rspack_core::{DependencyId, DependencyTemplate};
-use rspack_core::{DependencyType, ErrorSpan, ModuleDependency};
+use rspack_core::{DependencyType, ModuleDependency};
 use rspack_core::{TemplateContext, TemplateReplaceSource};
 
+#[cacheable]
 #[derive(Debug, Clone)]
 pub struct CommonJsRequireDependency {
   id: DependencyId,
   request: String,
   optional: bool,
-  range: Option<RealDependencyLocation>,
-  range_expr: RealDependencyLocation,
+  range: DependencyRange,
+  range_expr: Option<DependencyRange>,
+  #[cacheable(with=Skip)]
+  source_map: Option<SharedSourceMap>,
 }
 
 impl CommonJsRequireDependency {
   pub fn new(
     request: String,
-    range: Option<RealDependencyLocation>,
-    range_expr: RealDependencyLocation,
+    range: DependencyRange,
+    range_expr: Option<DependencyRange>,
     optional: bool,
+    source_map: Option<SharedSourceMap>,
   ) -> Self {
     Self {
       id: DependencyId::new(),
@@ -26,17 +33,19 @@ impl CommonJsRequireDependency {
       optional,
       range,
       range_expr,
+      source_map,
     }
   }
 }
 
+#[cacheable_dyn]
 impl Dependency for CommonJsRequireDependency {
   fn id(&self) -> &DependencyId {
     &self.id
   }
 
-  fn loc(&self) -> Option<String> {
-    self.range.clone().map(|range| range.to_string())
+  fn loc(&self) -> Option<DependencyLocation> {
+    self.range.to_loc(self.source_map.as_ref())
   }
 
   fn category(&self) -> &DependencyCategory {
@@ -47,11 +56,8 @@ impl Dependency for CommonJsRequireDependency {
     &DependencyType::CjsRequire
   }
 
-  fn span(&self) -> Option<ErrorSpan> {
-    self
-      .range
-      .clone()
-      .map(|range| ErrorSpan::new(range.start, range.end))
+  fn range(&self) -> Option<&DependencyRange> {
+    self.range_expr.as_ref()
   }
 
   fn could_affect_referencing_module(&self) -> rspack_core::AffectType {
@@ -59,6 +65,7 @@ impl Dependency for CommonJsRequireDependency {
   }
 }
 
+#[cacheable_dyn]
 impl ModuleDependency for CommonJsRequireDependency {
   fn request(&self) -> &str {
     &self.request
@@ -77,6 +84,7 @@ impl ModuleDependency for CommonJsRequireDependency {
   }
 }
 
+#[cacheable_dyn]
 impl DependencyTemplate for CommonJsRequireDependency {
   fn apply(
     &self,
@@ -84,8 +92,8 @@ impl DependencyTemplate for CommonJsRequireDependency {
     code_generatable_context: &mut TemplateContext,
   ) {
     source.replace(
-      self.range_expr.start,
-      self.range_expr.end - 1,
+      self.range.start,
+      self.range.end - 1,
       module_id(
         code_generatable_context.compilation,
         &self.id,

@@ -56,6 +56,7 @@ import {
 	NaturalModuleIdsPlugin,
 	NoEmitOnErrorsPlugin,
 	NodeTargetPlugin,
+	OccurrenceChunkIdsPlugin,
 	RealContentHashPlugin,
 	RemoveEmptyChunksPlugin,
 	RuntimeChunkPlugin,
@@ -64,7 +65,6 @@ import {
 	SizeLimitsPlugin,
 	SourceMapDevToolPlugin,
 	SplitChunksPlugin,
-	WarnCaseSensitiveModulesPlugin,
 	WorkerPlugin
 } from "./builtin-plugin";
 import EntryOptionPlugin from "./lib/EntryOptionPlugin";
@@ -188,6 +188,7 @@ export class RspackOptionsApply {
 				const cheap = options.devtool.includes("cheap");
 				const moduleMaps = options.devtool.includes("module");
 				const noSources = options.devtool.includes("nosources");
+				const debugIds = options.devtool.includes("debugids");
 				const Plugin = evalWrapped
 					? EvalSourceMapDevToolPlugin
 					: SourceMapDevToolPlugin;
@@ -200,7 +201,8 @@ export class RspackOptionsApply {
 					module: moduleMaps ? true : !cheap,
 					columns: !cheap,
 					noSources: noSources,
-					namespace: options.output.devtoolNamespace
+					namespace: options.output.devtoolNamespace,
+					debugIds: debugIds
 				}).apply(compiler);
 			} else if (options.devtool.includes("eval")) {
 				new EvalDevToolModulePlugin({
@@ -280,12 +282,7 @@ export class RspackOptionsApply {
 								lazyOptions,
 								new Module(jsModule)
 							)
-					: lazyOptions.test
-						? {
-								source: lazyOptions.test.source,
-								flags: lazyOptions.test.flags
-							}
-						: undefined,
+					: lazyOptions.test,
 				lazyOptions.backend
 			).apply(compiler);
 		}
@@ -332,6 +329,7 @@ export class RspackOptionsApply {
 			switch (chunkIds) {
 				case "natural": {
 					new NaturalChunkIdsPlugin().apply(compiler);
+					break;
 				}
 				case "named": {
 					new NamedChunkIdsPlugin().apply(compiler);
@@ -339,6 +337,18 @@ export class RspackOptionsApply {
 				}
 				case "deterministic": {
 					new DeterministicChunkIdsPlugin().apply(compiler);
+					break;
+				}
+				case "size": {
+					new OccurrenceChunkIdsPlugin({
+						prioritiseInitial: true
+					}).apply(compiler);
+					break;
+				}
+				case "total-size": {
+					new OccurrenceChunkIdsPlugin({
+						prioritiseInitial: false
+					}).apply(compiler);
 					break;
 				}
 				default:
@@ -364,8 +374,6 @@ export class RspackOptionsApply {
 		if (options.performance) {
 			new SizeLimitsPlugin(options.performance).apply(compiler);
 		}
-
-		new WarnCaseSensitiveModulesPlugin().apply(compiler);
 
 		if (options.cache) {
 			new MemoryCachePlugin().apply(compiler);

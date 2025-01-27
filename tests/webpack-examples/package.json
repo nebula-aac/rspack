@@ -4,11 +4,10 @@
   "devDependencies": {
     "core-js": "3.36.1",
     "neo-async": "2.6.2",
-    "@types/neo-async": "^2.6.6",
     "acorn": "^8.11.3",
     "date-fns": "^2.29.3",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "prop-types": "^15.8.1",
     "webpack-cli": "5.1.4",
     "toml": "^3.0.0",
@@ -19,8 +18,8 @@
     "coffee-loader": "^1.0.0",
     "coffeescript": "^2.5.1",
     "@babel/preset-react": "^7.22.15",
-    "css-loader": "^6.11.0",
-    "style-loader": "^3.3.3",
+    "css-loader": "^7.1.2",
+    "style-loader": "^4.0.0",
     "wast-loader": "^1.12.1"
   }
 }

@@ -150,7 +150,7 @@ module.exports = {
 
 ## output.clean
 
-- **类型：** `boolean`
+- **类型：** `boolean | { keep?: string }`
 - **默认值：** `false`
 
 在生成产物前，删除输出目录下的所有文件。
@@ -160,6 +160,35 @@ module.exports = {
   //...
   output: {
     clean: true, // Clean the output directory before emit.
+  },
+
+  // or
+  output: {
+    clean: {
+      keep: 'ignored/dir', // keep these assets under 'dist/ignored/dir'.
+    },
+  },
+};
+```
+
+## output.compareBeforeEmit
+
+<ApiMeta addedVersion={'1.1.0'} />
+
+- **类型：** `boolean`
+- **默认值：** `true`
+
+告知 Rspack 在写入产物文件时检查文件是否已经存在并且拥有相同内容。
+
+:::warning
+当在文件系统中已经存在有相同内容的文件时，Rspack 将不会写入产物文件。
+:::
+
+```js title="rspack.config.js"
+module.exports = {
+  //...
+  output: {
+    compareBeforeEmit: false,
   },
 };
 ```
@@ -351,6 +380,8 @@ module.exports = {
       const: true,
       // The environment supports destructuring ('{ a, b } = obj').
       destructuring: true,
+      // The environment supports 'document' variable.
+      document: true,
       // The environment supports an async import() function to import EcmaScript modules.
       dynamicImport: false,
       // The environment supports an async import() when creating a worker, only for web targets at the moment.
@@ -362,7 +393,7 @@ module.exports = {
       // The environment supports ECMAScript Module syntax to import ECMAScript modules (import ... from '...').
       module: false,
       // Determines if the node: prefix is generated for core module imports in environments that support it.
-      // This is only applicable to Webpack runtime code.
+      // This is only applicable to webpack runtime code.
       nodePrefixForCoreModules: false,
       // The environment supports optional chaining ('obj?.a' or 'obj?.()').
       optionalChaining: true,
@@ -390,7 +421,7 @@ module.exports = {
 };
 ```
 
-然而，当通过多个 Entry、代码拆分或各种插件创建多个包时，您应该使用以下替换之一来给每个包一个唯一的名字...
+然而，当通过多个 Entry、代码拆分或各种插件创建多个包时，你应该使用以下替换之一来给每个包一个唯一的名字...
 
 :::info 对于拆分成多个 bundle 的情况的描述
 
@@ -462,60 +493,60 @@ module.exports = {
 
 这个选项被称为文件名，但你仍然可以使用类似 `js/[name]/bundle.js` 的东西来创建文件夹结构。
 
-请注意，此选项不会影响到按需加载块的输出文件。它只影响最初加载的输出文件。对于按需加载的块文件，使用的是 [`output.chunkFilename`](#outputchunkfilename) 选项。由加载器创建的文件也不会受到影响。在这种情况下，您可能需要尝试特定加载器提供的可用选项。
+请注意，此选项不会影响到按需加载块的输出文件。它只影响最初加载的输出文件。对于按需加载的块文件，使用的是 [`output.chunkFilename`](#outputchunkfilename) 选项。由加载器创建的文件也不会受到影响。在这种情况下，你可能需要尝试特定加载器提供的可用选项。
 
-## Template String
+## Template string
 
 可以用下方的模板字符串来替换对应文件名。不同的 context 对应了不同的可替换内容，如 [`output.assetModuleFilename`](/config/output#outputassetmodulefilename) 支持使用 [file context](/config/output#file-context) 和 [module context](/config/output#module-context)。
 
-### Compilation Context
+### Compilation context
 
 可在 compilation 层面替换的内容
 
-| 模板       | 描述                    |
-| ---------- | ----------------------- |
-| [fullhash] | compilation 的完整 hash |
+| 模板         | 描述                    |
+| ------------ | ----------------------- |
+| `[fullhash]` | compilation 的完整 hash |
 
-### Chunk Context
+### Chunk context
 
 可在 chunk 层面替换的内容：
 
-| 模板          | 描述                                                                                                                                           |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| [id]          | 当前 chunk id                                                                                                                                  |
-| [name]        | 当 chunk name 存在则使用名称，否则使用 chunk id                                                                                                |
-| [chunkhash]   | chunk 的 hash 值，通过当前 chunk 中所有类型的元素计算所得                                                                                      |
-| [contenthash] | chunk 的 hash 值，通过只包含该类型内容的元素计算所得。如：生成 JavaScript 类型的文件则只会使用当前 chunk 中所有 JavaScript 模块计算所得的 hash |
+| 模板            | 描述                                                                                                                                           |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `[id]`          | 当前 chunk id                                                                                                                                  |
+| `[name]`        | 当 chunk name 存在则使用名称，否则使用 chunk id                                                                                                |
+| `[chunkhash]`   | chunk 的 hash 值，通过当前 chunk 中所有类型的元素计算所得                                                                                      |
+| `[contenthash]` | chunk 的 hash 值，通过只包含该类型内容的元素计算所得。如：生成 JavaScript 类型的文件则只会使用当前 chunk 中所有 JavaScript 模块计算所得的 hash |
 
-### Module Context
+### Module context
 
 可在 module 层面替换的内容：
 
-| 模板          | 描述            |
-| ------------- | --------------- |
-| [id]          | 模块的 id       |
-| [hash]        | 模块的 hash     |
-| [contenthash] | 模块内容的 hash |
+| 模板            | 描述            |
+| --------------- | --------------- |
+| `[id]`          | 模块的 id       |
+| `[hash]`        | 模块的 hash     |
+| `[contenthash]` | 模块内容的 hash |
 
-### File Context
+### File context
 
 可在 file 层面替换的内容：
 
-| 模板       | 描述                                                                                          |
-| ---------- | --------------------------------------------------------------------------------------------- |
-| [file]     | 文件名和路径，不包括查询或片段                                                                |
-| [query]    | 文件 query，包含 `?`                                                                          |
-| [fragment] | 以 `#` 开头的片段名                                                                           |
-| [base]     | 只翻译文件名（包括扩展名），不包括路径名                                                      |
-| [path]     | 文件路径，不包含文件名                                                                        |
-| [name]     | 文件名，不包含扩展名和文件路径                                                                |
-| [ext]      | 扩展名，包含 `.` （仅支持在 [output.assetModuleFilename](#outputassetmodulefilename) 里使用） |
+| 模板         | 描述                                                                                          |
+| ------------ | --------------------------------------------------------------------------------------------- |
+| `[file]`     | 文件名和路径，不包括查询或片段                                                                |
+| `[query]`    | 文件 query，包含 `?`                                                                          |
+| `[fragment]` | 以 `#` 开头的片段名                                                                           |
+| `[base]`     | 只翻译文件名（包括扩展名），不包括路径名                                                      |
+| `[path]`     | 文件路径，不包含文件名                                                                        |
+| `[name]`     | 文件名，不包含扩展名和文件路径                                                                |
+| `[ext]`      | 扩展名，包含 `.` （仅支持在 [output.assetModuleFilename](#outputassetmodulefilename) 里使用） |
 
 在 URL 级别上可用的替换：
 
-| 模板  | 描述 |
-| ----- | ---- |
-| [url] | URL  |
+| 模板    | 描述 |
+| ------- | ---- |
+| `[url]` | URL  |
 
 :::tip
 
@@ -523,7 +554,7 @@ module.exports = {
 
 :::
 
-Hash 的长度（`[hash]`、`[contenthash]` 或 `[chunkhash]`）可以使用 `[hash:16]` 来指定（默认为 20）。另外，可以使用 [output.hashDigestLength](#outputhashdigestlength) 来全局配置长度。
+Hash 的长度（`[hash]`、`[contenthash]` 或 `[chunkhash]`）可以使用 `[hash:12]` 来指定（默认为 16）。另外，可以使用 [output.hashDigestLength](#outputhashdigestlength) 来全局配置长度。
 
 当你想在实际文件名中使用占位符时，可以过滤掉占位符替换。例如，要输出一个文件 `[name].js`，你必须通过在括号之间添加反斜杠来转义 `[name]` 占位符。这样 `[\name\]` 会生成 `[name]` 而不是被替换为资源的名称。
 
@@ -560,6 +591,12 @@ type ModulePathData = {
 };
 ```
 
+:::warning
+在进行本地开发时，建议避免在文件名中使用 hash 值。
+
+这是因为入口文件以及被 [`optimization.splitChunks`](/plugins/webpack/split-chunks-plugin) 拆分出的 chunks 都会通过 HTML 文件中的 `<script>` 标签进行加载。此时若文件名内包含 hash 值，则会由于 HTML 无法被动态加载而使得热更新失效。
+:::
+
 ## output.globalObject
 
 - **类型：** `string`
@@ -593,20 +630,16 @@ module.exports = {
 ## output.hashDigestLength
 
 - **类型：** `number`
-- **默认值：** `20`
+- **默认值：** `16`
 
 要使用的哈希摘要的长度。
-
-:::tip
-`hashDigestLength` 默认值为 `20`，当启用 [`experiments.futureDefaults`](/config/experiments#experimentsfuturedefaults) 时将使用 `16` 作为默认值。
-:::
 
 ## output.hashFunction
 
 - **类型：** `'md4' | 'xxhash64'`
-- **默认值：** `'md4'`
+- **默认值：** `'xxhash64'`
 
-要使用的哈希算法。
+指定要使用的哈希算法。
 
 ```javascript title=rspack.config.js
 module.exports = {
@@ -618,7 +651,7 @@ module.exports = {
 ```
 
 :::tip
-`hashFunction` 支持更快的 `xxhash64` 算法，当启用 [`experiments.futureDefaults`](/config/experiments#experimentsfuturedefaults) 时将使用它作为默认值。
+Rspack 从 1.1 版本开始默认使用更快的 `xxhash64` 算法。
 :::
 
 ## output.hashSalt
@@ -1333,7 +1366,7 @@ module.exports = {
 };
 ```
 
-这将把您的入口返回值包装在一个 JSONP 中。
+这将把你的入口返回值包装在一个 JSONP 中。
 
 ```js
 MyLibrary(_entry_return_);
@@ -1634,7 +1667,7 @@ module.exports = {
 - **类型：** `boolean`
 - **默认值：** `false`
 
-按照 ES Module 规范处理 module 加载时的错误，会有性能损失。
+按照 ES modules 规范处理 module 加载时的错误，会有性能损失。
 
 ```js title="rspack.config.js"
 module.exports = {
@@ -1644,6 +1677,12 @@ module.exports = {
   },
 };
 ```
+
+## output.strictModuleExceptionHandling
+
+- **Types:** boolean
+
+告诉 Rspack 当 require 模块出现错误时，移除模块的缓存。
 
 ## output.trustedTypes
 
@@ -1664,6 +1703,28 @@ module.exports = {
   output: {
     trustedTypes: {
       policyName: 'my-application#webpack',
+    },
+  },
+};
+```
+
+### output.trustedTypes.onPolicyCreationFailure
+
+<ApiMeta addedVersion={'1.1.6'} />
+
+- **类型：** `"stop" | "continue"`
+- **默认值：** `"stop"`
+
+确定当 [`require-trusted-types-for 'script'`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/require-trusted-types-for) 未能正确执行时，是继续加载还是异常终止。未能正确执行可能是由于策略名称不在 CSP 的 `trusted-types` 列表中或策略名称重复而使得 `trustedTypes.createPolicy(...)` 执行失败。
+
+```js title="rspack.config.js"
+module.exports = {
+  //...
+  output: {
+    //...
+    trustedTypes: {
+      policyName: 'my-application#webpack',
+      onPolicyCreationFailure: 'continue',
     },
   },
 };

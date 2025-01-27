@@ -1,9 +1,5 @@
 # Glossary
 
-{
-// TODO: A glossary is usually alphabetized
-}
-
 Below are some common terms used with Rspack and webpack.
 
 ## asset
@@ -50,6 +46,14 @@ An application can be split into multiple files called modules, which may be Jav
 
 A module's type determines how it will be parsed and handled by the bundler. For example, we can tell Rspack that the module is a JavaScript module by specifying the module type as JavaScript, and Rspack will use the JavaScript parser to parse the module. If the specified module type is CSS, then Rspack will use a CSS parser to parse the module.
 
+## module specifier
+
+A module specifier is a string that can be resolved to a path to the module file. For example, in the following code, `./modules/foo.js` is a module specifier.
+
+```js
+import { foo } from './modules/foo.js';
+```
+
 ## module resolution
 
 Module resolution is the process of calculating the file path indicated by a module specifier. For example, an import statement includes a module specifier, and Rspack will use the module resolution algorithm to find the corresponding file path.
@@ -65,6 +69,10 @@ The module graph is a graph data structure that represents relationships between
 ## plugin
 
 A plugin is a program module that can be used to extend the functionality of Rspack by means of extensibility hooks. It can be used to customize the build process, or to integrate with other tools. Rspack provides lots of hooks which you can use to customize the build process.
+
+## runtime
+
+The runtime is all the code Rspack needs to connect your modularized application while it's running in the browser or other environments. It contains the loading and resolving logic needed to connect your modules as they interact.
 
 ## scope hoisting
 

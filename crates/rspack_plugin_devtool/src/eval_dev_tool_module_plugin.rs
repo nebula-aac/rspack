@@ -1,13 +1,17 @@
 use std::sync::LazyLock;
 use std::{borrow::Cow, hash::Hash};
 
+use cow_utils::CowUtils;
 use dashmap::DashMap;
-use derivative::Derivative;
+use derive_more::Debug;
 use rspack_collections::UkeySet;
 use rspack_core::{
-  rspack_sources::{BoxSource, RawSource, Source, SourceExt},
+  rspack_sources::{BoxSource, RawStringSource, Source, SourceExt},
   ApplyContext, BoxModule, ChunkInitFragments, ChunkUkey, Compilation, CompilationParams,
   CompilerCompilation, CompilerOptions, Plugin, PluginContext,
+};
+use rspack_core::{
+  CompilationAdditionalModuleRuntimeRequirements, ModuleIdentifier, RuntimeGlobals,
 };
 use rspack_error::Result;
 use rspack_hash::RspackHash;
@@ -21,11 +25,10 @@ use crate::{
   module_filename_helpers::ModuleFilenameHelpers, ModuleFilenameTemplate, ModuleOrSource,
 };
 
-#[derive(Derivative, Clone)]
-#[derivative(Debug)]
+#[derive(Clone, Debug)]
 pub struct EvalDevToolModulePluginOptions {
   pub namespace: Option<String>,
-  #[derivative(Debug = "ignore")]
+  #[debug(skip)]
   pub module_filename_template: Option<ModuleFilenameTemplate>,
   pub source_url_comment: Option<String>,
 }
@@ -33,12 +36,11 @@ pub struct EvalDevToolModulePluginOptions {
 const EVAL_DEV_TOOL_MODULE_PLUGIN_NAME: &str = "rspack.EvalDevToolModulePlugin";
 
 #[plugin]
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Debug)]
 pub struct EvalDevToolModulePlugin {
   namespace: String,
   source_url_comment: String,
-  #[derivative(Debug = "ignore")]
+  #[debug(skip)]
   module_filename_template: ModuleFilenameTemplate,
   cache: DashMap<BoxSource, BoxSource>,
 }
@@ -83,6 +85,7 @@ async fn eval_devtool_plugin_compilation(
   hooks
     .inline_in_runtime_bailout
     .tap(eval_devtool_plugin_inline_in_runtime_bailout::new(self));
+
   Ok(())
 }
 
@@ -125,21 +128,26 @@ fn eval_devtool_plugin_render_module_content(
     let source = &origin_source.source();
     let footer = format!(
       "\n{}",
-      self.source_url_comment.replace(
+      &self.source_url_comment.cow_replace(
         "[url]",
         encode_uri(&str)
-          .replace("%2F", "/")
-          .replace("%20", "_")
-          .replace("%5E", "^")
-          .replace("%5C", "\\")
+          .cow_replace("%2F", "/")
+          .cow_replace("%20", "_")
+          .cow_replace("%5E", "^")
+          .cow_replace("%5C", "\\")
           .trim_start_matches('/')
       )
     );
-    // TODO: Implement support for the trustedTypes option.
-    // This will depend on the additionalModuleRuntimeRequirements hook.
-    RawSource::from(format!(
+
+    let module_content =
+      simd_json::to_string(&format!("{source}{footer}")).expect("failed to parse string");
+    RawStringSource::from(format!(
       "eval({});",
-      simd_json::to_string(&format!("{source}{footer}")).expect("failed to parse string")
+      if compilation.options.output.trusted_types.is_some() {
+        format!("{}({})", RuntimeGlobals::CREATE_SCRIPT, module_content)
+      } else {
+        module_content
+      }
     ))
     .boxed()
   };
@@ -173,18 +181,33 @@ impl Plugin for EvalDevToolModulePlugin {
     EVAL_DEV_TOOL_MODULE_PLUGIN_NAME
   }
 
-  fn apply(
-    &self,
-    ctx: PluginContext<&mut ApplyContext>,
-    _options: &mut CompilerOptions,
-  ) -> Result<()> {
+  fn apply(&self, ctx: PluginContext<&mut ApplyContext>, _options: &CompilerOptions) -> Result<()> {
     ctx
       .context
       .compiler_hooks
       .compilation
       .tap(eval_devtool_plugin_compilation::new(self));
+    ctx
+      .context
+      .compilation_hooks
+      .additional_module_runtime_requirements
+      .tap(eval_devtool_plugin_additional_module_runtime_requirements::new(self));
     Ok(())
   }
+}
+
+#[plugin_hook(CompilationAdditionalModuleRuntimeRequirements for EvalDevToolModulePlugin)]
+fn eval_devtool_plugin_additional_module_runtime_requirements(
+  &self,
+  compilation: &Compilation,
+  _module: &ModuleIdentifier,
+  runtime_requirements: &mut RuntimeGlobals,
+) -> Result<()> {
+  if compilation.options.output.trusted_types.is_some() {
+    runtime_requirements.insert(RuntimeGlobals::CREATE_SCRIPT);
+  }
+
+  Ok(())
 }
 
 // https://tc39.es/ecma262/#sec-encode

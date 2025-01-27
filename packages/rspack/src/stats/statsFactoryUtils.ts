@@ -1,7 +1,8 @@
 import type * as binding from "@rspack/binding";
 
 import type { JsOriginRecord } from "@rspack/binding";
-import type { Compilation, NormalizedStatsOptions } from "../Compilation";
+import type { Compilation } from "../Compilation";
+import type { StatsOptions } from "../config";
 import {
 	type Comparator,
 	compareIds,
@@ -62,6 +63,7 @@ export type KnownAssetInfo = {
 	// modulehash?: string | string[];
 	contenthash?: string | string[];
 	sourceFilename?: string;
+	copied?: boolean;
 	size?: number;
 	development?: boolean;
 	hotModuleReplacement?: boolean;
@@ -182,6 +184,14 @@ export type StatsModuleTraceItem = {
 	moduleName?: string;
 	originId?: string;
 	moduleId?: string;
+	dependencies?: StatsModuleTraceDependency[];
+};
+
+export type StatsModuleTraceDependency = KnownStatsModuleTraceDependency &
+	Record<string, any>;
+
+export type KnownStatsModuleTraceDependency = {
+	loc: string;
 };
 
 export type KnownStatsModuleReason = {
@@ -191,10 +201,10 @@ export type KnownStatsModuleReason = {
 	resolvedModuleIdentifier?: string;
 	resolvedModule?: string;
 	type?: string;
-	// active: boolean;
-	// explanation?: string;
+	active: boolean;
+	explanation?: string;
 	userRequest?: string;
-	// loc?: string;
+	loc?: string;
 	moduleId?: string | null;
 	resolvedModuleId?: string | number | null;
 };
@@ -313,6 +323,10 @@ export type SimpleExtractors = {
 		binding.JsStatsModuleTrace,
 		StatsModuleTraceItem
 	>;
+	moduleTraceDependency: ExtractorsByOption<
+		binding.JsStatsModuleTraceDependency,
+		StatsModuleTraceDependency
+	>;
 };
 
 export const uniqueArray = <T, I>(
@@ -338,7 +352,7 @@ export const uniqueOrderedArray = <T, I>(
 
 export const iterateConfig = (
 	config: Record<string, Record<string, Function>>,
-	options: NormalizedStatsOptions,
+	options: StatsOptions,
 	fn: (a1: string, a2: Function) => void
 ) => {
 	for (const hookFor of Object.keys(config)) {
@@ -346,9 +360,17 @@ export const iterateConfig = (
 		for (const option of Object.keys(subConfig)) {
 			if (option !== "_") {
 				if (option.startsWith("!")) {
-					if (options[option.slice(1)]) continue;
+					if (
+						// string cannot be used as key, so use "as"
+						(options as Record<string, StatsOptions[keyof StatsOptions]>)[
+							option.slice(1)
+						]
+					)
+						continue;
 				} else {
-					const value = options[option];
+					const value = (
+						options as Record<string, StatsOptions[keyof StatsOptions]>
+					)[option];
 					if (
 						value === false ||
 						value === undefined ||
@@ -437,7 +459,7 @@ export const spaceLimited = (
 	let children: any[] | undefined = undefined;
 	let filteredChildren: number | undefined = undefined;
 	// This are the groups, which take 1+ lines each
-	const groups = [];
+	const groups: ItemChildren = [];
 	// The sizes of the groups are stored in groupSizes
 	const groupSizes = [];
 	// This are the items, which take 1 line each
@@ -476,7 +498,7 @@ export const spaceLimited = (
 		if (limit < max) {
 			// calculate how much we are over the size limit
 			// this allows to approach the limit faster
-			let oversize;
+			let oversize: number;
 			// If each group would take 1 line the total would be below the maximum
 			// collapse some groups, keep items
 			while (
@@ -495,14 +517,13 @@ export const spaceLimited = (
 				}
 				for (let i = 0; i < groups.length; i++) {
 					if (groupSizes[i] === maxGroupSize) {
-						// @ts-expect-error
 						const group = groups[i];
 						// run this algorithm recursively and limit the size of the children to
 						// current size - oversize / number of groups
 						// So it should always end up being smaller
 						const headerSize = group.filteredChildren ? 2 : 1;
 						const limited = spaceLimited(
-							group.children,
+							group.children!,
 							maxGroupSize -
 								// we should use ceil to always feet in max
 								Math.ceil(oversize / groups.length) -
@@ -576,7 +597,7 @@ export const sortByField = (
 	field: string
 ): ((a1: Object, a2: Object) => number) => {
 	if (!field) {
-		const noSort = (a: any, b: any) => 0;
+		const noSort = (_a: any, _b: any) => 0;
 		return noSort;
 	}
 
@@ -584,7 +605,6 @@ export const sortByField = (
 
 	let sortFn = compareSelect(
 		(m: Record<string, any>) => m[fieldKey],
-		// @ts-expect-error
 		compareIds
 	);
 
@@ -609,7 +629,9 @@ export const assetGroup = (children: StatsAsset[]) => {
 	};
 };
 
-export const moduleGroup = (children: KnownStatsModule[]) => {
+export const moduleGroup = (
+	children: { size: number; sizes: Record<string, number> }[]
+): { size: number; sizes: Record<string, number> } => {
 	let size = 0;
 	const sizes: Record<string, number> = {};
 	for (const module of children) {

@@ -1,21 +1,24 @@
-use std::path::PathBuf;
+use std::path::Path;
 
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{ParallelBridge, ParallelIterator};
 use rspack_collections::{Identifier, IdentifierMap};
 use rspack_error::Result;
-use rspack_fs::AsyncWritableFileSystem;
 use rspack_hash::RspackHashDigest;
+use rspack_paths::ArcPath;
 use rspack_sources::Source;
 use rustc_hash::FxHashSet as HashSet;
 
 use crate::{
-  fast_set, get_chunk_from_ukey, ChunkKind, Compilation, Compiler, ModuleExecutor, RuntimeSpec,
+  chunk_graph_chunk::ChunkId, chunk_graph_module::ModuleId, fast_set,
+  incremental::IncrementalPasses, ChunkGraph, ChunkKind, Compilation, Compiler, ModuleExecutor,
+  RuntimeSpec,
 };
 
-impl<T> Compiler<T>
-where
-  T: AsyncWritableFileSystem + Send + Sync,
-{
+impl Compiler {
+  #[tracing::instrument("Compiler:rebuild", skip_all, fields(
+    compiler.changed_files = ?changed_files.iter().cloned().collect::<Vec<_>>(),
+    compiler.deleted_files = ?deleted_files.iter().cloned().collect::<Vec<_>>()
+  ))]
   pub async fn rebuild(
     &mut self,
     changed_files: std::collections::HashSet<String>,
@@ -30,15 +33,17 @@ where
     let all_old_runtime = old
       .compilation
       .get_chunk_graph_entries()
-      .into_iter()
-      .filter_map(|entry_ukey| get_chunk_from_ukey(&entry_ukey, &old.compilation.chunk_by_ukey))
-      .flat_map(|entry_chunk| entry_chunk.runtime.clone())
+      .filter_map(|entry_ukey| old.compilation.chunk_by_ukey.get(&entry_ukey))
+      .flat_map(|entry_chunk| entry_chunk.runtime().clone())
       .collect();
 
-    let mut old_chunks: Vec<(String, RuntimeSpec)> = vec![];
+    let mut old_chunks: Vec<(ChunkId, RuntimeSpec)> = vec![];
     for (_, chunk) in old.compilation.chunk_by_ukey.iter() {
-      if chunk.kind != ChunkKind::HotUpdate {
-        old_chunks.push((chunk.expect_id().to_string(), chunk.runtime.clone()));
+      if chunk.kind() != ChunkKind::HotUpdate {
+        old_chunks.push((
+          chunk.expect_id(&old.compilation.chunk_ids_artifact).clone(),
+          chunk.runtime().clone(),
+        ));
       }
     }
 
@@ -52,41 +57,49 @@ where
 
     // build without stats
     {
-      let mut modified_files = HashSet::default();
-      modified_files.extend(changed_files.iter().map(PathBuf::from));
-      let mut removed_files = HashSet::default();
-      removed_files.extend(deleted_files.iter().map(PathBuf::from));
+      let mut modified_files: HashSet<ArcPath> = HashSet::default();
+      modified_files.extend(changed_files.iter().map(|files| Path::new(files).into()));
+      let mut removed_files: HashSet<ArcPath> = HashSet::default();
+      removed_files.extend(deleted_files.iter().map(|files| Path::new(files).into()));
 
       let mut all_files = modified_files.clone();
       all_files.extend(removed_files.clone());
 
       self.old_cache.end_idle();
-      self
-        .old_cache
-        .set_modified_files(all_files.into_iter().collect());
-      self.plugin_driver.resolver_factory.clear_cache();
+      // self
+      //   .old_cache
+      //   .set_modified_files(all_files.into_iter().collect());
+
+      self.plugin_driver.clear_cache();
 
       let mut new_compilation = Compilation::new(
         self.options.clone(),
         self.plugin_driver.clone(),
+        self.buildtime_plugin_driver.clone(),
         self.resolver_factory.clone(),
         self.loader_resolver_factory.clone(),
         Some(records),
+        self.cache.clone(),
         self.old_cache.clone(),
-        self.unaffected_modules_cache.clone(),
         Some(ModuleExecutor::default()),
         modified_files,
         removed_files,
+        self.input_filesystem.clone(),
+        self.intermediate_filesystem.clone(),
+        self.output_filesystem.clone(),
       );
-
-      if let Some(state) = self.options.get_incremental_rebuild_make_state() {
-        state.set_is_not_first();
-      }
 
       new_compilation.hot_index = self.compilation.hot_index + 1;
 
-      let is_incremental_rebuild_make = self.options.is_incremental_rebuild_make_enabled();
-      if is_incremental_rebuild_make {
+      if let Some(mutations) = new_compilation.incremental.mutations_write()
+        && let Some(old_mutations) = self.compilation.incremental.mutations_write()
+      {
+        mutations.swap_modules_with_chunk_graph_cache(old_mutations);
+      }
+      if new_compilation
+        .incremental
+        .can_read_mutations(IncrementalPasses::MAKE)
+      {
         // copy field from old compilation
         // make stage used
         self
@@ -100,25 +113,99 @@ where
         // reuse module executor
         new_compilation.module_executor = std::mem::take(&mut self.compilation.module_executor);
       }
-
-      if self.options.new_incremental_enabled() {
-        new_compilation.cgm_hash_results = std::mem::take(&mut self.compilation.cgm_hash_results);
+      if new_compilation
+        .incremental
+        .can_read_mutations(IncrementalPasses::INFER_ASYNC_MODULES)
+      {
+        new_compilation.async_modules_artifact =
+          std::mem::take(&mut self.compilation.async_modules_artifact);
+      }
+      if new_compilation
+        .incremental
+        .can_read_mutations(IncrementalPasses::DEPENDENCIES_DIAGNOSTICS)
+      {
+        new_compilation.dependencies_diagnostics_artifact =
+          std::mem::take(&mut self.compilation.dependencies_diagnostics_artifact);
+      }
+      if new_compilation
+        .incremental
+        .can_read_mutations(IncrementalPasses::SIDE_EFFECTS)
+      {
+        new_compilation.side_effects_optimize_artifact =
+          std::mem::take(&mut self.compilation.side_effects_optimize_artifact);
+      }
+      if new_compilation
+        .incremental
+        .can_read_mutations(IncrementalPasses::MODULE_IDS)
+      {
+        new_compilation.module_ids_artifact =
+          std::mem::take(&mut self.compilation.module_ids_artifact);
+      }
+      if new_compilation
+        .incremental
+        .can_read_mutations(IncrementalPasses::CHUNK_IDS)
+      {
+        new_compilation.chunk_ids_artifact =
+          std::mem::take(&mut self.compilation.chunk_ids_artifact);
+      }
+      if new_compilation
+        .incremental
+        .can_read_mutations(IncrementalPasses::MODULES_HASHES)
+      {
+        new_compilation.cgm_hash_artifact = std::mem::take(&mut self.compilation.cgm_hash_artifact);
+      }
+      if new_compilation
+        .incremental
+        .can_read_mutations(IncrementalPasses::MODULES_CODEGEN)
+      {
         new_compilation.code_generation_results =
           std::mem::take(&mut self.compilation.code_generation_results);
-        new_compilation.cgm_runtime_requirements_results =
-          std::mem::take(&mut self.compilation.cgm_runtime_requirements_results);
+      }
+      if new_compilation
+        .incremental
+        .can_read_mutations(IncrementalPasses::MODULES_RUNTIME_REQUIREMENTS)
+      {
+        new_compilation.cgm_runtime_requirements_artifact =
+          std::mem::take(&mut self.compilation.cgm_runtime_requirements_artifact);
+      }
+      if new_compilation
+        .incremental
+        .can_read_mutations(IncrementalPasses::CHUNKS_RUNTIME_REQUIREMENTS)
+      {
+        new_compilation.cgc_runtime_requirements_artifact =
+          std::mem::take(&mut self.compilation.cgc_runtime_requirements_artifact);
+      }
+      if new_compilation
+        .incremental
+        .can_read_mutations(IncrementalPasses::CHUNKS_HASHES)
+      {
+        new_compilation.chunk_hashes_artifact =
+          std::mem::take(&mut self.compilation.chunk_hashes_artifact);
+      }
+      if new_compilation
+        .incremental
+        .can_read_mutations(IncrementalPasses::CHUNKS_RENDER)
+      {
+        new_compilation.chunk_render_artifact =
+          std::mem::take(&mut self.compilation.chunk_render_artifact);
       }
 
       // FOR BINDING SAFETY:
       // Update `compilation` for each rebuild.
       // Make sure `thisCompilation` hook was called before any other hooks that leverage `JsCompilation`.
       fast_set(&mut self.compilation, new_compilation);
+      if let Err(err) = self.cache.before_compile(&mut self.compilation).await {
+        self.compilation.push_diagnostic(err.into());
+      }
       self.compile().await?;
 
       self.old_cache.begin_idle();
     }
 
     self.compile_done().await?;
+    if let Err(err) = self.cache.after_compile(&self.compilation).await {
+      self.compilation.push_diagnostic(err.into());
+    }
 
     Ok(())
   }
@@ -126,31 +213,32 @@ where
 
 #[derive(Debug)]
 pub struct CompilationRecords {
-  pub old_chunks: Vec<(String, RuntimeSpec)>,
+  pub old_chunks: Vec<(ChunkId, RuntimeSpec)>,
   pub all_old_runtime: RuntimeSpec,
-  pub old_all_modules: IdentifierMap<(RspackHashDigest, String)>,
+  pub old_all_modules: IdentifierMap<(RspackHashDigest, ModuleId)>,
   pub old_runtime_modules: IdentifierMap<String>,
   pub old_hash: Option<RspackHashDigest>,
 }
 
 pub type ChangedModules = (
-  IdentifierMap<(RspackHashDigest, String)>,
+  IdentifierMap<(RspackHashDigest, ModuleId)>,
   IdentifierMap<String>,
 );
 pub fn collect_changed_modules(compilation: &Compilation) -> Result<ChangedModules> {
   let modules_map = compilation
     .chunk_graph
     .chunk_graph_module_by_module_identifier
-    .par_iter()
-    .filter_map(|(identifier, cgm)| {
-      let cid = cgm.id.as_deref();
+    .keys()
+    .par_bridge()
+    .filter_map(|identifier| {
+      let cid = ChunkGraph::get_module_id(&compilation.module_ids_artifact, *identifier);
       // TODO: Determine how to calc module hash if module related to multiple runtime code
       // gen
       if let Some(code_generation_result) = compilation.code_generation_results.get_one(identifier)
         && let Some(module_hash) = &code_generation_result.hash
         && let Some(cid) = cid
       {
-        Some((*identifier, (module_hash.clone(), cid.to_string())))
+        Some((*identifier, (module_hash.clone(), cid.clone())))
       } else {
         None
       }

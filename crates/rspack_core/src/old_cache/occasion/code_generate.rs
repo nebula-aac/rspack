@@ -16,26 +16,30 @@ impl CodeGenerateOccasion {
     Self { storage }
   }
 
-  #[tracing::instrument(skip_all, fields(module = ?job.module))]
+  // #[tracing::instrument(skip_all, fields(module = ?job.module))]
   pub fn use_cache(
     &self,
     job: CodeGenerationJob,
     provide: impl Fn(ModuleIdentifier, &RuntimeSpec) -> Result<CodeGenerationResult>,
-  ) -> Result<(CodeGenerationResult, Vec<RuntimeSpec>, bool)> {
+  ) -> (Result<CodeGenerationResult>, Vec<RuntimeSpec>, bool) {
     let storage = match &self.storage {
       Some(s) => s,
       None => {
-        let res = provide(job.module, &job.runtime)?;
-        return Ok((res, job.runtimes, false));
+        let res = provide(job.module, &job.runtime);
+        return (res, job.runtimes, false);
       }
     };
     let cache_key = Identifier::from(format!("{}|{}", job.module, job.hash.encoded()));
     if let Some(value) = storage.get(&cache_key) {
-      Ok((value, job.runtimes, true))
+      (Ok(value), job.runtimes, true)
     } else {
-      let res = provide(job.module, &job.runtime)?;
-      storage.set(cache_key, res.clone());
-      Ok((res, job.runtimes, false))
+      match provide(job.module, &job.runtime) {
+        Ok(res) => {
+          storage.set(cache_key, res.clone());
+          (Ok(res), job.runtimes, false)
+        }
+        Err(err) => (Err(err), job.runtimes, false),
+      }
     }
   }
 }

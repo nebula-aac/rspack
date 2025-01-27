@@ -2,6 +2,7 @@ aarch
 ahabhgk
 Akait
 alexander-akait
+alibaba
 analysable
 ansi
 antd
@@ -25,6 +26,7 @@ chenjiahan
 codeva
 commmonjs
 cpuprofile
+Colum
 CRACO
 cssextractrspackplugin
 dail
@@ -58,9 +60,11 @@ idents
 Idents
 iife
 Iife
+incrementality
 indicatif
 inituit
 innovatively
+inottn
 intlify
 IWANABETHATGUY
 jantimon
@@ -70,7 +74,10 @@ jkzing
 jscexperimentalplugins
 JSCPU
 jscpuprofile
+jserfeng
 kaffi
+kuaishou
+Kyrylo
 lightningcss
 lingyucoder
 linux
@@ -108,7 +115,9 @@ NestJS
 ngtools
 noimport
 nosources
+nuxt
 nwjs
+nyqykk
 Omereshone
 optimizationemitonerrors
 optionsrspackexperiments
@@ -128,6 +137,7 @@ proxying
 px2rem
 pxtorem
 recognise
+resolvepnp
 Rollup
 rome
 rsbuild
@@ -149,6 +159,7 @@ Rust
 rustup
 sanyuan
 Shenzhen
+shulaoda
 sockjs
 sokra
 solidjs
@@ -161,9 +172,11 @@ swcjsminimizerplugin
 swcjsminimizerrspackplugin
 swcpack
 sxzz
+systemjs
 tailwind
 tailwindcss
 Terser
+tiktok
 tokio
 Towhk
 tuchg

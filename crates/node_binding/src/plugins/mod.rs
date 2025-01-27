@@ -14,6 +14,7 @@ use rspack_hook::plugin_hook;
 use rspack_hook::Hook as _;
 use rspack_plugin_html::HtmlRspackPlugin;
 use rspack_plugin_javascript::JsPlugin;
+use rspack_plugin_runtime::RuntimePlugin;
 
 use self::interceptor::*;
 
@@ -38,8 +39,10 @@ pub struct JsHooksAdapterPlugin {
   register_compilation_after_optimize_modules_taps: RegisterCompilationAfterOptimizeModulesTaps,
   register_compilation_optimize_tree_taps: RegisterCompilationOptimizeTreeTaps,
   register_compilation_optimize_chunk_modules_taps: RegisterCompilationOptimizeChunkModulesTaps,
-  register_compilation_additional_tree_runtime_requirements:
+  register_compilation_additional_tree_runtime_requirements_taps:
     RegisterCompilationAdditionalTreeRuntimeRequirementsTaps,
+  register_compilation_runtime_requirement_in_tree_taps:
+    RegisterCompilationRuntimeRequirementInTreeTaps,
   register_compilation_runtime_module_taps: RegisterCompilationRuntimeModuleTaps,
   register_compilation_chunk_hash_taps: RegisterCompilationChunkHashTaps,
   register_compilation_chunk_asset_taps: RegisterCompilationChunkAssetTaps,
@@ -65,6 +68,9 @@ pub struct JsHooksAdapterPlugin {
   register_html_plugin_after_template_execution_taps: RegisterHtmlPluginAfterTemplateExecutionTaps,
   register_html_plugin_before_emit_taps: RegisterHtmlPluginBeforeEmitTaps,
   register_html_plugin_after_emit_taps: RegisterHtmlPluginAfterEmitTaps,
+  register_runtime_plugin_create_script_taps: RegisterRuntimePluginCreateScriptTaps,
+  register_runtime_plugin_link_preload_taps: RegisterRuntimePluginLinkPreloadTaps,
+  register_runtime_plugin_link_prefetch_taps: RegisterRuntimePluginLinkPrefetchTaps,
 }
 
 impl fmt::Debug for JsHooksAdapterPlugin {
@@ -79,11 +85,11 @@ impl rspack_core::Plugin for JsHooksAdapterPlugin {
     "rspack.JsHooksAdapterPlugin"
   }
 
-  #[tracing::instrument(name = "js_hooks_adapter::apply", skip_all)]
+  // #[tracing::instrument("js_hooks_adapter::apply", skip_all)]
   fn apply(
     &self,
     ctx: PluginContext<&mut ApplyContext>,
-    _options: &mut CompilerOptions,
+    _options: &CompilerOptions,
   ) -> rspack_error::Result<()> {
     ctx
       .context
@@ -184,7 +190,16 @@ impl rspack_core::Plugin for JsHooksAdapterPlugin {
       .additional_tree_runtime_requirements
       .intercept(
         self
-          .register_compilation_additional_tree_runtime_requirements
+          .register_compilation_additional_tree_runtime_requirements_taps
+          .clone(),
+      );
+    ctx
+      .context
+      .compilation_hooks
+      .runtime_requirement_in_tree
+      .intercept(
+        self
+          .register_compilation_runtime_requirement_in_tree_taps
           .clone(),
       );
     ctx
@@ -300,7 +315,104 @@ impl rspack_core::Plugin for JsHooksAdapterPlugin {
       .compilation
       .tap(html_hooks_adapter_compilation::new(self));
 
+    ctx
+      .context
+      .compiler_hooks
+      .compilation
+      .tap(runtime_hooks_adapter_compilation::new(self));
+
     Ok(())
+  }
+
+  fn clear_cache(&self) {
+    self.register_compiler_this_compilation_taps.clear_cache();
+    self.register_compiler_compilation_taps.clear_cache();
+    self.register_compiler_make_taps.clear_cache();
+    self.register_compiler_finish_make_taps.clear_cache();
+    self.register_compiler_should_emit_taps.clear_cache();
+    self.register_compiler_emit_taps.clear_cache();
+    self.register_compiler_after_emit_taps.clear_cache();
+    self.register_compiler_asset_emitted_taps.clear_cache();
+    self.register_compilation_build_module_taps.clear_cache();
+    self
+      .register_compilation_still_valid_module_taps
+      .clear_cache();
+    self.register_compilation_succeed_module_taps.clear_cache();
+    self.register_compilation_execute_module_taps.clear_cache();
+    self.register_compilation_finish_modules_taps.clear_cache();
+    self
+      .register_compilation_optimize_modules_taps
+      .clear_cache();
+    self
+      .register_compilation_after_optimize_modules_taps
+      .clear_cache();
+    self.register_compilation_optimize_tree_taps.clear_cache();
+    self
+      .register_compilation_optimize_chunk_modules_taps
+      .clear_cache();
+    self
+      .register_compilation_additional_tree_runtime_requirements_taps
+      .clear_cache();
+    self
+      .register_compilation_runtime_requirement_in_tree_taps
+      .clear_cache();
+    self.register_compilation_runtime_module_taps.clear_cache();
+    self.register_compilation_chunk_hash_taps.clear_cache();
+    self.register_compilation_chunk_asset_taps.clear_cache();
+    self.register_compilation_process_assets_taps.clear_cache();
+    self
+      .register_compilation_after_process_assets_taps
+      .clear_cache();
+    self.register_compilation_seal_taps.clear_cache();
+    self.register_compilation_after_seal_taps.clear_cache();
+    self
+      .register_normal_module_factory_before_resolve_taps
+      .clear_cache();
+    self
+      .register_normal_module_factory_factorize_taps
+      .clear_cache();
+    self
+      .register_normal_module_factory_resolve_taps
+      .clear_cache();
+    self
+      .register_normal_module_factory_resolve_for_scheme_taps
+      .clear_cache();
+    self
+      .register_normal_module_factory_after_resolve_taps
+      .clear_cache();
+    self
+      .register_normal_module_factory_create_module_taps
+      .clear_cache();
+    self
+      .register_context_module_factory_before_resolve_taps
+      .clear_cache();
+    self
+      .register_context_module_factory_after_resolve_taps
+      .clear_cache();
+    self
+      .register_javascript_modules_chunk_hash_taps
+      .clear_cache();
+    self
+      .register_html_plugin_before_asset_tag_generation_taps
+      .clear_cache();
+    self
+      .register_html_plugin_alter_asset_tags_taps
+      .clear_cache();
+    self
+      .register_html_plugin_alter_asset_tag_groups_taps
+      .clear_cache();
+    self
+      .register_html_plugin_after_template_execution_taps
+      .clear_cache();
+    self.register_html_plugin_before_emit_taps.clear_cache();
+    self.register_html_plugin_after_emit_taps.clear_cache();
+    self
+      .register_runtime_plugin_create_script_taps
+      .clear_cache();
+    self.register_runtime_plugin_link_preload_taps.clear_cache();
+    self
+      .register_runtime_plugin_link_prefetch_taps
+      .clear_cache();
   }
 }
 
@@ -350,6 +462,25 @@ async fn html_hooks_adapter_compilation(
     .after_emit
     .intercept(self.register_html_plugin_after_emit_taps.clone());
 
+  Ok(())
+}
+
+#[plugin_hook(CompilerCompilation for JsHooksAdapterPlugin)]
+async fn runtime_hooks_adapter_compilation(
+  &self,
+  compilation: &mut Compilation,
+  _params: &mut CompilationParams,
+) -> rspack_error::Result<()> {
+  let mut hooks = RuntimePlugin::get_compilation_hooks_mut(compilation);
+  hooks
+    .create_script
+    .intercept(self.register_runtime_plugin_create_script_taps.clone());
+  hooks
+    .link_preload
+    .intercept(self.register_runtime_plugin_link_preload_taps.clone());
+  hooks
+    .link_prefetch
+    .intercept(self.register_runtime_plugin_link_prefetch_taps.clone());
   Ok(())
 }
 
@@ -428,9 +559,14 @@ impl JsHooksAdapterPlugin {
             register_js_taps.register_compilation_optimize_chunk_modules_taps,
             non_skippable_registers.clone(),
           ),
-        register_compilation_additional_tree_runtime_requirements:
+        register_compilation_additional_tree_runtime_requirements_taps:
           RegisterCompilationAdditionalTreeRuntimeRequirementsTaps::new(
-            register_js_taps.register_compilation_additional_tree_runtime_requirements,
+            register_js_taps.register_compilation_additional_tree_runtime_requirements_taps,
+            non_skippable_registers.clone(),
+          ),
+        register_compilation_runtime_requirement_in_tree_taps:
+          RegisterCompilationRuntimeRequirementInTreeTaps::new(
+            register_js_taps.register_compilation_runtime_requirement_in_tree_taps,
             non_skippable_registers.clone(),
           ),
         register_compilation_runtime_module_taps: RegisterCompilationRuntimeModuleTaps::new(
@@ -530,6 +666,18 @@ impl JsHooksAdapterPlugin {
         ),
         register_html_plugin_after_emit_taps: RegisterHtmlPluginAfterEmitTaps::new(
           register_js_taps.register_html_plugin_after_emit_taps,
+          non_skippable_registers.clone(),
+        ),
+        register_runtime_plugin_create_script_taps: RegisterRuntimePluginCreateScriptTaps::new(
+          register_js_taps.register_runtime_plugin_create_script_taps,
+          non_skippable_registers.clone(),
+        ),
+        register_runtime_plugin_link_preload_taps: RegisterRuntimePluginLinkPreloadTaps::new(
+          register_js_taps.register_runtime_plugin_link_preload_taps,
+          non_skippable_registers.clone(),
+        ),
+        register_runtime_plugin_link_prefetch_taps: RegisterRuntimePluginLinkPrefetchTaps::new(
+          register_js_taps.register_runtime_plugin_link_prefetch_taps,
           non_skippable_registers.clone(),
         ),
         non_skippable_registers,
