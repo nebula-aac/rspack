@@ -15,7 +15,7 @@ function v(name) {
 describeByWalk(
 	v("hot webworker"),
 	(name, src, dist) => {
-		createHotNewIncrementalCase(name, src, dist, "webworker", "jsdom");
+		createHotNewIncrementalCase(name, src, dist, "webworker", false);
 	},
 	{
 		source: path.resolve(__dirname, "./hotCases"),
@@ -28,13 +28,14 @@ describeByWalk(
 describeByWalk(
 	v("hot webworker (webpack-test)"),
 	(name, src, dist) => {
-		createHotNewIncrementalCase(name, src, dist, "webworker", "fake");
+		createHotNewIncrementalCase(name, src, dist, "webworker", true);
 	},
 	{
 		source: path.resolve(__dirname, "../../../tests/webpack-test/hotCases"),
 		dist: path.resolve(
 			__dirname,
 			`./js/new-incremental/webpack-test/hot-webworker`
-		)
+		),
+		exclude: [/require-disposed-module-warning/]
 	}
 );

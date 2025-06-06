@@ -15,7 +15,7 @@ function v(name) {
 describeByWalk(
 	v("hot web"),
 	(name, src, dist) => {
-		createHotNewIncrementalCase(name, src, dist, "web", "jsdom");
+		createHotNewIncrementalCase(name, src, dist, "web", false);
 	},
 	{
 		source: path.resolve(__dirname, "./hotCases"),
@@ -27,10 +27,14 @@ describeByWalk(
 describeByWalk(
 	v("hot web (webpack-test)"),
 	(name, src, dist) => {
-		createHotNewIncrementalCase(name, src, dist, "web", "fake");
+		createHotNewIncrementalCase(name, src, dist, "web", true);
 	},
 	{
 		source: path.resolve(__dirname, "../../../tests/webpack-test/hotCases"),
-		dist: path.resolve(__dirname, `./js/new-incremental/webpack-test/hot-web`)
+		dist: path.resolve(__dirname, `./js/new-incremental/webpack-test/hot-web`),
+		exclude: [
+			// there is a self reference module in this case causing the make phase didn't found the module is removed
+			/require-disposed-module-warning/
+		]
 	}
 );

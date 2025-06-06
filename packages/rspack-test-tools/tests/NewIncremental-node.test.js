@@ -15,7 +15,7 @@ function v(name) {
 describeByWalk(
 	v("hot async-node"),
 	(name, src, dist) => {
-		createHotNewIncrementalCase(name, src, dist, "async-node", "jsdom");
+		createHotNewIncrementalCase(name, src, dist, "async-node", false);
 	},
 	{
 		source: path.resolve(__dirname, "./hotCases"),
@@ -28,14 +28,15 @@ describeByWalk(
 describeByWalk(
 	v("hot async-node (webpack-test)"),
 	(name, src, dist) => {
-		createHotNewIncrementalCase(name, src, dist, "async-node", "fake");
+		createHotNewIncrementalCase(name, src, dist, "async-node", true);
 	},
 	{
 		source: path.resolve(__dirname, "../../../tests/webpack-test/hotCases"),
 		dist: path.resolve(
 			__dirname,
 			`./js/new-incremental/webpack-test/hot-async-node`
-		)
+		),
+		exclude: [/require-disposed-module-warning/]
 	}
 );
 
@@ -43,10 +44,11 @@ describeByWalk(
 describeByWalk(
 	v("hot node (webpack-test)"),
 	(name, src, dist) => {
-		createHotNewIncrementalCase(name, src, dist, "node", "fake");
+		createHotNewIncrementalCase(name, src, dist, "node", true);
 	},
 	{
 		source: path.resolve(__dirname, "../../../tests/webpack-test/hotCases"),
-		dist: path.resolve(__dirname, `./js/new-incremental/webpack-test/hot-node`)
+		dist: path.resolve(__dirname, `./js/new-incremental/webpack-test/hot-node`),
+		exclude: [/require-disposed-module-warning/]
 	}
 );
