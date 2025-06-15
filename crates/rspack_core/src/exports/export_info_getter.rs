@@ -4,8 +4,11 @@ use itertools::Itertools;
 use rspack_util::atom::Atom;
 use rustc_hash::FxHashMap as HashMap;
 
-use super::{ExportInfoData, ExportProvided, ExportsInfo, UsageState};
-use crate::RuntimeSpec;
+use super::{
+  ExportInfoData, ExportInfoTargetValue, ExportProvided, ExportsInfo, Inlinable, UsageState,
+  UsedNameItem,
+};
+use crate::{DependencyId, RuntimeSpec};
 
 pub struct ExportInfoGetter;
 
@@ -38,13 +41,20 @@ impl ExportInfoGetter {
     info.exports_info
   }
 
+  pub fn inlinable(info: &ExportInfoData) -> &Inlinable {
+    &info.inlinable
+  }
+
   /// Webpack returns `false | string`, we use `Option<Atom>` to avoid declare a redundant enum
   /// type
   pub fn get_used_name(
     info: &ExportInfoData,
     fallback_name: Option<&Atom>,
     runtime: Option<&RuntimeSpec>,
-  ) -> Option<Atom> {
+  ) -> Option<UsedNameItem> {
+    if let Inlinable::Inlined(inlined) = &info.inlinable {
+      return Some(UsedNameItem::Inlined(*inlined));
+    }
     if info.has_use_in_runtime_info {
       if let Some(usage) = info.global_used {
         if matches!(usage, UsageState::Unused) {
@@ -64,12 +74,12 @@ impl ExportInfoGetter {
       }
     }
     if let Some(used_name) = info.used_name.as_ref() {
-      return Some(used_name.clone());
+      return Some(UsedNameItem::Str(used_name.clone()));
     }
     if let Some(name) = info.name.as_ref() {
-      Some(name.clone())
+      Some(UsedNameItem::Str(name.clone()))
     } else {
-      fallback_name.cloned()
+      fallback_name.map(|n| UsedNameItem::Str(n.clone()))
     }
   }
 
@@ -221,5 +231,29 @@ impl ExportInfoGetter {
 
   pub fn has_used_name(info: &ExportInfoData) -> bool {
     info.used_name.is_some()
+  }
+
+  pub fn get_max_target(
+    info: &ExportInfoData,
+  ) -> Cow<HashMap<Option<DependencyId>, ExportInfoTargetValue>> {
+    if info.target.len() <= 1 {
+      return Cow::Borrowed(&info.target);
+    }
+    let mut max_priority = u8::MIN;
+    let mut min_priority = u8::MAX;
+    for value in info.target.values() {
+      max_priority = max_priority.max(value.priority);
+      min_priority = min_priority.min(value.priority);
+    }
+    if max_priority == min_priority {
+      return Cow::Borrowed(&info.target);
+    }
+    let mut map = HashMap::default();
+    for (k, v) in info.target.iter() {
+      if max_priority == v.priority {
+        map.insert(*k, v.clone());
+      }
+    }
+    Cow::Owned(map)
   }
 }
