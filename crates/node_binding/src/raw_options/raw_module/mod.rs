@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Formatter, sync::Arc};
+use std::{collections::HashMap, fmt::Formatter, ptr::NonNull, sync::Arc};
 
 use derive_more::Debug;
 use napi::{
@@ -16,7 +16,7 @@ use rspack_core::{
   JavascriptParserOptions, JavascriptParserOrder, JavascriptParserUrl, JsonGeneratorOptions,
   JsonParserOptions, ModuleNoParseRule, ModuleNoParseRules, ModuleNoParseTestFn, ModuleOptions,
   ModuleRule, ModuleRuleEffect, ModuleRuleEnforce, ModuleRuleUse, ModuleRuleUseLoader,
-  OverrideStrict, ParseOption, ParserOptions, ParserOptionsMap,
+  OverrideStrict, ParseOption, ParserOptions, ParserOptionsMap, TypeReexportPresenceMode,
 };
 use rspack_error::error;
 use rspack_napi::threadsafe_function::ThreadsafeFunction;
@@ -101,10 +101,7 @@ impl TryFrom<RawRuleSetCondition> for rspack_core::RuleSetCondition {
   fn try_from(x: RawRuleSetCondition) -> rspack_error::Result<Self> {
     let result = match x {
       RawRuleSetCondition::string(s) => Self::String(s),
-      RawRuleSetCondition::regexp(r) => {
-        let reg = RspackRegex::with_flags(&r.source, &r.flags)?;
-        Self::Regexp(reg)
-      }
+      RawRuleSetCondition::regexp(r) => Self::Regexp(r),
       RawRuleSetCondition::logical(mut l) => {
         let l = l.get_mut(0).ok_or_else(|| {
           error!("TODO: use Box after https://github.com/napi-rs/napi-rs/issues/1500 landed")
@@ -292,6 +289,12 @@ pub struct RawJavascriptParserOptions {
   /// This option is experimental in Rspack only and subject to change or be removed anytime.
   /// @experimental
   pub import_dynamic: Option<bool>,
+  /// This option is experimental in Rspack only and subject to change or be removed anytime.
+  /// @experimental
+  pub inline_const: Option<bool>,
+  /// This option is experimental in Rspack only and subject to change or be removed anytime.
+  /// @experimental
+  pub type_reexports_presence: Option<String>,
 }
 
 impl From<RawJavascriptParserOptions> for JavascriptParserOptions {
@@ -323,6 +326,9 @@ impl From<RawJavascriptParserOptions> for JavascriptParserOptions {
         .reexport_exports_presence
         .map(|e| ExportPresenceMode::from(e.as_str())),
       strict_export_presence: value.strict_export_presence,
+      type_reexports_presence: value
+        .type_reexports_presence
+        .map(|e| TypeReexportPresenceMode::from(e.as_str())),
       worker: value.worker,
       override_strict: value
         .override_strict
@@ -332,6 +338,7 @@ impl From<RawJavascriptParserOptions> for JavascriptParserOptions {
       require_dynamic: value.require_dynamic,
       require_resolve: value.require_resolve,
       import_dynamic: value.import_dynamic,
+      inline_const: value.inline_const,
     }
   }
 }
@@ -649,9 +656,19 @@ pub struct RawAssetGeneratorDataUrlFnCtx {
 
 impl From<AssetGeneratorDataUrlFnCtx<'_>> for RawAssetGeneratorDataUrlFnCtx {
   fn from(value: AssetGeneratorDataUrlFnCtx) -> Self {
+    // AssetGeneratorDataUrlFn may be called during the importModule process,
+    // at which point the corresponding Module is not present in compilation.moduleGraph.
+    // Therefore, we use a raw pointer to allow JavaScript to access the Module.
+    #[allow(clippy::unwrap_used)]
     Self {
       filename: value.filename,
-      module: ModuleObject::with_ref(value.module, value.compilation.compiler_id()),
+      module: ModuleObject::with_ptr(
+        NonNull::new(
+          value.module as *const dyn rspack_core::Module as *mut dyn rspack_core::Module,
+        )
+        .unwrap(),
+        value.compilation.compiler_id(),
+      ),
     }
   }
 }

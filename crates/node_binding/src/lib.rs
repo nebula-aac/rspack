@@ -9,15 +9,20 @@ extern crate rspack_allocator;
 use std::{cell::RefCell, sync::Arc};
 
 use compiler::{Compiler, CompilerState, CompilerStateGuard};
+use fs_node::HybridFileSystem;
 use napi::{bindgen_prelude::*, CallContext};
 use rspack_collections::UkeyMap;
 use rspack_core::{
   BoxDependency, Compilation, CompilerId, EntryOptions, ModuleIdentifier, PluginExt,
 };
 use rspack_error::Diagnostic;
-use rspack_fs::IntermediateFileSystem;
+use rspack_fs::{IntermediateFileSystem, NativeFileSystem, ReadableFileSystem};
+use rspack_tasks::{within_compiler_context_sync, CompilerContext, CURRENT_COMPILER_CONTEXT};
 
-use crate::fs_node::{NodeFileSystem, ThreadsafeNodeFS};
+use crate::{
+  fs_node::{NodeFileSystem, ThreadsafeNodeFS},
+  trace_event::RawTraceEvent,
+};
 
 mod allocator;
 mod asset;
@@ -33,6 +38,7 @@ mod codegen_result;
 mod compilation;
 mod compiler;
 mod context_module_factory;
+mod define_symbols;
 mod dependencies;
 mod dependency;
 mod diagnostic;
@@ -42,6 +48,7 @@ mod filename;
 mod fs_node;
 mod html;
 mod identifier;
+mod location;
 mod module;
 mod module_graph;
 mod module_graph_connection;
@@ -61,6 +68,7 @@ mod runtime;
 mod source;
 mod stats;
 mod swc;
+mod trace_event;
 mod utils;
 
 pub use asset::*;
@@ -82,6 +90,7 @@ pub use error::*;
 pub use exports_info::*;
 pub use filename::*;
 pub use html::*;
+pub use location::*;
 pub use module::*;
 pub use module_graph::*;
 pub use module_graph_connection::*;
@@ -97,7 +106,7 @@ use resolver_factory::*;
 pub use resource_data::*;
 pub use rsdoctor::*;
 use rspack_macros::rspack_version;
-use rspack_tracing::{ChromeTracer, StdoutTracer, Tracer};
+use rspack_tracing::{PerfettoTracer, StdoutTracer, TraceEvent, Tracer};
 pub use rstest::*;
 pub use runtime::*;
 use rustc_hash::FxHashMap;
@@ -130,6 +139,7 @@ pub struct JsCompiler {
   state: CompilerState,
   include_dependencies_map: FxHashMap<String, FxHashMap<EntryOptions, BoxDependency>>,
   entry_dependencies_map: FxHashMap<String, FxHashMap<EntryOptions, BoxDependency>>,
+  compiler_context: Arc<CompilerContext>,
 }
 
 #[napi]
@@ -140,75 +150,108 @@ impl JsCompiler {
     env: Env,
     mut this: This,
     compiler_path: String,
-    options: RawOptions,
+    mut options: RawOptions,
     builtin_plugins: Vec<BuiltinPlugin>,
     register_js_taps: RegisterJsTaps,
     output_filesystem: ThreadsafeNodeFS,
     intermediate_filesystem: Option<ThreadsafeNodeFS>,
+    input_filesystem: Option<ThreadsafeNodeFS>,
     mut resolver_factory_reference: Reference<JsResolverFactory>,
   ) -> Result<Self> {
     tracing::info!(name:"rspack_version", version = rspack_version!());
     tracing::info!(name:"raw_options", options=?&options);
+    let compiler_context = Arc::new(CompilerContext::new());
+    CURRENT_COMPILER_CONTEXT.sync_scope(compiler_context.clone(), || {
+      let mut plugins = Vec::with_capacity(builtin_plugins.len());
+      let js_hooks_plugin = JsHooksAdapterPlugin::from_js_hooks(env, register_js_taps)?;
+      plugins.push(js_hooks_plugin.clone().boxed());
 
-    let mut plugins = Vec::with_capacity(builtin_plugins.len());
-    let js_hooks_plugin = JsHooksAdapterPlugin::from_js_hooks(env, register_js_taps)?;
-    plugins.push(js_hooks_plugin.clone().boxed());
+      let tsfn = env
+        .create_function("cleanup_revoked_modules", cleanup_revoked_modules)?
+        .build_threadsafe_function::<External<Vec<ModuleIdentifier>>>()
+        .weak::<true>()
+        .callee_handled::<false>()
+        .max_queue_size::<1>()
+        .build()?;
+      let js_cleanup_plugin = JsCleanupPlugin::new(tsfn);
+      plugins.push(js_cleanup_plugin.boxed());
 
-    let tsfn = env
-      .create_function("cleanup_revoked_modules", cleanup_revoked_modules)?
-      .build_threadsafe_function::<External<Vec<ModuleIdentifier>>>()
-      .weak::<true>()
-      .callee_handled::<false>()
-      .max_queue_size::<1>()
-      .build()?;
-    let js_cleanup_plugin = JsCleanupPlugin::new(tsfn);
-    plugins.push(js_cleanup_plugin.boxed());
+      for bp in builtin_plugins {
+        bp.append_to(env, &mut this, &mut plugins)?;
+      }
 
-    for bp in builtin_plugins {
-      bp.append_to(env, &mut this, &mut plugins)?;
-    }
+      let use_input_fs = options.experiments.use_input_file_system.take();
+      let compiler_options: rspack_core::CompilerOptions = options.try_into().to_napi_result()?;
 
-    let compiler_options: rspack_core::CompilerOptions = options.try_into().to_napi_result()?;
+      tracing::debug!(name:"normalized_options", options=?&compiler_options);
 
-    tracing::debug!(name:"normalized_options", options=?&compiler_options);
+      let input_file_system: Option<Arc<dyn ReadableFileSystem>> =
+        input_filesystem.and_then(|fs| {
+          use_input_fs.and_then(|use_input_file_system| {
+            let node_fs = NodeFileSystem::new(fs).expect("Failed to create readable filesystem");
 
-    let resolver_factory =
-      (*resolver_factory_reference).get_resolver_factory(compiler_options.resolve.clone());
-    let loader_resolver_factory = (*resolver_factory_reference)
-      .get_loader_resolver_factory(compiler_options.resolve_loader.clone());
+            match use_input_file_system {
+              WithFalse::False => None,
+              WithFalse::True(allowlist) => {
+                if allowlist.is_empty() {
+                  return None;
+                }
+                let binding: Arc<dyn ReadableFileSystem> = Arc::new(HybridFileSystem::new(
+                  allowlist,
+                  node_fs,
+                  NativeFileSystem::new(compiler_options.resolve.pnp.unwrap_or(false)),
+                ));
+                Some(binding)
+              }
+            }
+          })
+        });
 
-    let intermediate_filesystem: Option<Arc<dyn IntermediateFileSystem>> =
-      if let Some(fs) = intermediate_filesystem {
+      if let Some(fs) = &input_file_system {
+        resolver_factory_reference.input_filesystem = fs.clone();
+      }
+
+      let resolver_factory =
+        (*resolver_factory_reference).get_resolver_factory(compiler_options.resolve.clone());
+      let loader_resolver_factory = (*resolver_factory_reference)
+        .get_loader_resolver_factory(compiler_options.resolve_loader.clone());
+
+      let intermediate_filesystem: Option<Arc<dyn IntermediateFileSystem>> =
+        if let Some(fs) = intermediate_filesystem {
+          Some(Arc::new(
+            NodeFileSystem::new(fs).to_napi_result_with_message(|e| {
+              format!("Failed to create intermediate filesystem: {e}")
+            })?,
+          ))
+        } else {
+          None
+        };
+
+      let rspack = rspack_core::Compiler::new(
+        compiler_path,
+        compiler_options,
+        plugins,
+        buildtime_plugins::buildtime_plugins(),
         Some(Arc::new(
-          NodeFileSystem::new(fs).to_napi_result_with_message(|e| {
-            format!("Failed to create intermediate filesystem: {e}")
+          NodeFileSystem::new(output_filesystem).to_napi_result_with_message(|e| {
+            format!("Failed to create writable filesystem: {e}")
           })?,
-        ))
-      } else {
-        None
-      };
+        )),
+        intermediate_filesystem,
+        input_file_system,
+        Some(resolver_factory),
+        Some(loader_resolver_factory),
+        Some(compiler_context.clone()),
+      );
 
-    let rspack = rspack_core::Compiler::new(
-      compiler_path,
-      compiler_options,
-      plugins,
-      buildtime_plugins::buildtime_plugins(),
-      Some(Arc::new(
-        NodeFileSystem::new(output_filesystem)
-          .to_napi_result_with_message(|e| format!("Failed to create writable filesystem: {e}"))?,
-      )),
-      intermediate_filesystem,
-      None,
-      Some(resolver_factory),
-      Some(loader_resolver_factory),
-    );
-
-    Ok(Self {
-      compiler: Compiler::from(rspack),
-      state: CompilerState::init(),
-      js_hooks_plugin,
-      include_dependencies_map: Default::default(),
-      entry_dependencies_map: Default::default(),
+      Ok(Self {
+        compiler: Compiler::from(rspack),
+        state: CompilerState::init(),
+        js_hooks_plugin,
+        include_dependencies_map: Default::default(),
+        entry_dependencies_map: Default::default(),
+        compiler_context,
+      })
     })
   }
 
@@ -235,7 +278,7 @@ impl JsCompiler {
             tracing::debug!("build ok");
             Ok(())
           },
-          || drop(guard),
+          Some(|| drop(guard)),
         )
       })
     }
@@ -271,7 +314,7 @@ impl JsCompiler {
             tracing::debug!("rebuild ok");
             Ok(())
           },
-          || drop(guard),
+          Some(|| drop(guard)),
         )
       })
     }
@@ -329,8 +372,7 @@ impl JsCompiler {
     });
 
     self.cleanup_last_compilation(&compiler.compilation);
-
-    f(compiler, guard)
+    within_compiler_context_sync(self.compiler_context.clone(), || f(compiler, guard))
   }
 
   fn cleanup_last_compilation(&self, compilation: &Compilation) {
@@ -396,6 +438,13 @@ fn init() {
     thread,
   };
 
+  #[cfg(feature = "sftrace-setup")]
+  if std::env::var_os("SFTRACE_OUTPUT_FILE").is_some() {
+    unsafe {
+      sftrace_setup::setup();
+    }
+  }
+
   panic::install_panic_handler();
   // control the number of blocking threads, similar as https://github.com/tokio-rs/tokio/blob/946401c345d672d357693740bc51f77bc678c5c4/tokio/src/loom/std/mod.rs#L93
   const ENV_BLOCKING_THREADS: &str = "RSPACK_BLOCKING_THREADS";
@@ -432,7 +481,6 @@ fn print_error_diagnostic(e: rspack_error::Error, colored: bool) -> String {
 thread_local! {
   static GLOBAL_TRACE_STATE: RefCell<TraceState> = const { RefCell::new(TraceState::Off) };
 }
-
 /**
  * Some code is modified based on
  * https://github.com/swc-project/swc/blob/d1d0607158ab40463d1b123fed52cc526eba8385/bindings/binding_core_node/src/util.rs#L29-L58
@@ -443,17 +491,17 @@ thread_local! {
 #[napi]
 pub fn register_global_trace(
   filter: String,
-  #[napi(ts_arg_type = "\"chrome\" | \"logger\" ")] layer: String,
+  #[napi(ts_arg_type = " \"logger\" | \"perfetto\" ")] layer: String,
   output: String,
 ) -> anyhow::Result<()> {
   GLOBAL_TRACE_STATE.with(|state| {
     let mut state = state.borrow_mut();
     if let TraceState::Off = *state {
       let mut tracer: Box<dyn Tracer> = match layer.as_str() {
-        "chrome" => Box::new(ChromeTracer::default()),
         "logger" => Box::new(StdoutTracer),
+        "perfetto"=> Box::new(PerfettoTracer::default()),
         _ => anyhow::bail!(
-          "Unexpected layer: {}, supported layers: 'chrome', 'logger', 'console' ",
+          "Unexpected layer: {}, supported layers:'logger', 'perfetto' ",
           layer
         ),
       };
@@ -487,6 +535,33 @@ pub fn cleanup_global_trace() {
     *state = TraceState::Off;
   });
 }
+// sync Node.js event to Rust side
+#[napi]
+pub fn sync_trace_event(events: Vec<RawTraceEvent>) {
+  use std::borrow::BorrowMut;
+  GLOBAL_TRACE_STATE.with(|state| {
+    let mut state = state.borrow_mut();
+    if let TraceState::On(tracer) = &mut **state.borrow_mut() {
+      tracer.sync_trace(
+        events
+          .into_iter()
+          .map(|event| TraceEvent {
+            name: event.name,
+            track_name: event.track_name,
+            process_name: event.process_name,
+            args: event
+              .args
+              .map(|args| args.into_iter().map(|(k, v)| (k, v.to_string())).collect()),
+            uuid: event.uuid,
+            ts: event.ts.get_u64().1,
+            ph: event.ph,
+            categories: event.categories,
+          })
+          .collect(),
+      );
+    }
+  });
+}
 
 fn node_init(mut _exports: Object, env: Env) -> Result<()> {
   rspack_core::set_thread_local_allocator(Box::new(allocator::NapiAllocatorImpl::new(env)));
@@ -496,26 +571,7 @@ fn node_init(mut _exports: Object, env: Env) -> Result<()> {
 #[napi(module_exports)]
 pub fn rspack_module_exports(exports: Object, env: Env) -> Result<()> {
   node_init(exports, env)?;
-  module::init(exports, env)?;
+  module::export_symbols(exports, env)?;
+  build_info::export_symbols(exports, env)?;
   Ok(())
-}
-
-#[napi]
-/// Shutdown the tokio runtime manually.
-///
-/// This is required for the wasm target with `tokio_unstable` cfg.
-/// In the wasm runtime, the `park` threads will hang there until the tokio::Runtime is shutdown.
-pub fn shutdown_async_runtime() {
-  #[cfg(all(target_family = "wasm", tokio_unstable))]
-  napi::bindgen_prelude::shutdown_async_runtime();
-}
-
-#[napi]
-/// Start the async runtime manually.
-///
-/// This is required when the async runtime is shutdown manually.
-/// Usually it's used in test.
-pub fn start_async_runtime() {
-  #[cfg(all(target_family = "wasm", tokio_unstable))]
-  napi::bindgen_prelude::start_async_runtime();
 }

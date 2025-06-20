@@ -341,7 +341,7 @@ export type HashDigest = string;
 export type HashDigestLength = number;
 
 /** The hashing algorithm to use. */
-export type HashFunction = "md4" | "xxhash64";
+export type HashFunction = "md4" | "xxhash64" | "sha256";
 
 /** An optional salt to update the hash. */
 export type HashSalt = string;
@@ -1097,6 +1097,12 @@ export type JavascriptParserOptions = {
 
 	// TODO: add docs
 	importDynamic?: boolean;
+
+	/** Inline const values in this module */
+	inlineConst?: boolean;
+
+	/** Whether to tolerant exportsPresence for type reexport */
+	typeReexportsPresence?: "no-tolerant" | "tolerant" | "tolerant-no-check";
 };
 
 export type JsonParserOptions = {
@@ -1358,6 +1364,9 @@ type AllowTarget =
 	| "es2020"
 	| "es2021"
 	| "es2022"
+	| "es2023"
+	| "es2024"
+	| "es2025"
 	| "node"
 	| "async-node"
 	| `node${number}`
@@ -1603,33 +1612,19 @@ export type InfrastructureLogging = {
 /**
  * Configuration used to control the behavior of the Source Map generation.
  */
+type DevToolPosition = "inline-" | "hidden-" | "eval-" | "";
+
+type DevToolNoSources = "nosources-" | "";
+
+type DevToolCheap = "cheap-" | "cheap-module-" | "";
+
+type DevToolDebugIds = "-debugids" | "";
+
+// [inline-|hidden-|eval-][nosources-][cheap-[module-]]source-map[-debugids].
 export type DevTool =
 	| false
 	| "eval"
-	| "cheap-source-map"
-	| "cheap-module-source-map"
-	| "source-map"
-	| "inline-cheap-source-map"
-	| "inline-cheap-module-source-map"
-	| "inline-source-map"
-	| "inline-nosources-cheap-source-map"
-	| "inline-nosources-cheap-module-source-map"
-	| "inline-nosources-source-map"
-	| "nosources-cheap-source-map"
-	| "nosources-cheap-module-source-map"
-	| "nosources-source-map"
-	| "hidden-nosources-cheap-source-map"
-	| "hidden-nosources-cheap-module-source-map"
-	| "hidden-nosources-source-map"
-	| "hidden-cheap-source-map"
-	| "hidden-cheap-module-source-map"
-	| "hidden-source-map"
-	| "eval-cheap-source-map"
-	| "eval-cheap-module-source-map"
-	| "eval-source-map"
-	| "eval-nosources-cheap-source-map"
-	| "eval-nosources-cheap-module-source-map"
-	| "eval-nosources-source-map";
+	| `${DevToolPosition}${DevToolNoSources}${DevToolCheap}source-map${DevToolDebugIds}`;
 //#endregion
 
 //#region Node
@@ -2629,6 +2624,11 @@ export type IncrementalPresets =
 export type HttpUriOptions = HttpUriPluginOptions;
 
 /**
+ * Options for experiments.useInputFileSystem
+ */
+export type UseInputFileSystem = false | RegExp[];
+
+/**
  * Experimental features configuration.
  */
 export type Experiments = {
@@ -2702,6 +2702,21 @@ export type Experiments = {
 	 * @default false
 	 */
 	parallelLoader?: boolean;
+	/**
+	 * Enable Node.js input file system
+	 * @default false
+	 */
+	useInputFileSystem?: UseInputFileSystem;
+	/**
+	 * Enable inline constants
+	 * @default false
+	 */
+	inlineConst?: boolean;
+	/**
+	 * Enable inline constants
+	 * @default false
+	 */
+	typeReexportsPresence?: JavascriptParserOptions["typeReexportsPresence"];
 };
 //#endregion
 
@@ -2749,6 +2764,8 @@ export type WatchOptions = {
  * Options for devServer, it based on `webpack-dev-server@5`
  * */
 export interface DevServer extends DevServerOptions {}
+
+export type { Middleware as DevServerMiddleware } from "./devServer";
 //#endregion
 
 //#region IgnoreWarnings

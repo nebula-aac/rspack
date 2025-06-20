@@ -114,23 +114,6 @@ macro_rules! impl_module_methods {
         }
 
         #[js_function]
-        fn readable_identifier_getter(ctx: napi::CallContext) -> napi::Result<String> {
-          let this = ctx.this::<napi::JsObject>()?;
-          let wrapped_value: &mut $module = unsafe {
-            napi::bindgen_prelude::FromNapiMutRef::from_napi_mut_ref(
-              ctx.env.raw(),
-              napi::NapiRaw::raw(&this),
-            )?
-          };
-          let (_, module) = wrapped_value.module.as_ref()?;
-          let res = module
-            .get_context()
-            .map(|ctx| module.readable_identifier(ctx.as_ref()).to_string())
-            .unwrap_or_default();
-          Ok(res)
-        }
-
-        #[js_function]
         fn build_info_getter(ctx: napi::CallContext) -> napi::Result<napi::bindgen_prelude::Object> {
           use napi::{bindgen_prelude::FromNapiValue, NapiRaw};
           let mut this = ctx.this::<napi::JsObject>()?;
@@ -141,7 +124,7 @@ macro_rules! impl_module_methods {
           if let Some(r) = &reference.build_info_ref {
             return r.as_object(env);
           }
-          let mut build_info = $crate::KnownBuildInfo::new(reference.downgrade()).get_jsobject(env)?;
+          let mut build_info = $crate::BuildInfo::new(reference.downgrade()).get_jsobject(env)?;
           $crate::MODULE_BUILD_INFO_SYMBOL.with(|once_cell| {
             let sym = unsafe {
               #[allow(clippy::unwrap_used)]
@@ -166,7 +149,7 @@ macro_rules! impl_module_methods {
           let raw_env = env.raw();
           let mut reference: napi::bindgen_prelude::Reference<Module> =
             unsafe { napi::bindgen_prelude::Reference::from_napi_value(raw_env, this.raw())? };
-          let new_build_info = $crate::KnownBuildInfo::new(reference.downgrade());
+          let new_build_info = $crate::BuildInfo::new(reference.downgrade());
           let mut new_instrance = new_build_info.get_jsobject(env)?;
 
           let names = input_object.get_all_property_names(
@@ -203,39 +186,59 @@ macro_rules! impl_module_methods {
         }
 
         properties.push(
-          napi::Property::new("type")?
+          napi::Property::new()
+            .with_utf8_name("type")?
             .with_value(&env.create_string(module.module_type().as_str())?),
         );
-        properties.push(napi::Property::new("context")?.with_getter(context_getter));
-        properties.push(napi::Property::new("layer")?.with_getter(layer_getter));
-        properties.push(napi::Property::new("useSourceMap")?.with_getter(use_source_map_getter));
         properties.push(
-          napi::Property::new("useSimpleSourceMap")?.with_getter(use_simple_source_map_getter),
+          napi::Property::new()
+            .with_utf8_name("context")?
+            .with_getter(context_getter)
         );
         properties.push(
-          napi::Property::new("factoryMeta")?
+          napi::Property::new()
+            .with_utf8_name("layer")?
+            .with_getter(layer_getter)
+        );
+        properties.push(
+          napi::Property::new()
+            .with_utf8_name("useSourceMap")?
+            .with_getter(use_source_map_getter)
+        );
+        properties.push(
+          napi::Property::new()
+            .with_utf8_name("useSimpleSourceMap")?
+            .with_getter(use_simple_source_map_getter),
+        );
+        properties.push(
+          napi::Property::new()
+            .with_utf8_name("factoryMeta")?
             .with_getter(factory_meta_getter)
             .with_setter(factory_meta_setter),
         );
-        properties.push(napi::Property::new("buildInfo")?.with_getter(build_info_getter).with_setter(build_info_setter));
-        properties.push(napi::Property::new("buildMeta")?.with_value(&napi::bindgen_prelude::Object::new(env)?));
         properties.push(
-          napi::Property::new("_readableIdentifier")?.with_getter(readable_identifier_getter),
+          napi::Property::new()
+            .with_utf8_name("buildInfo")?
+            .with_getter(build_info_getter)
+            .with_setter(build_info_setter)
         );
-        object.define_properties(&properties)?;
-
-        $crate::MODULE_IDENTIFIER_SYMBOL.with(|once_cell| {
+        properties.push(
+          napi::Property::new()
+            .with_utf8_name("buildMeta")?
+            .with_value(&napi::bindgen_prelude::Object::new(env)?)
+        );
+        $crate:: MODULE_IDENTIFIER_SYMBOL.with(|once_cell| {
           let identifier = env.create_string(module.identifier().as_str())?;
-          let symbol = unsafe {
-            #[allow(clippy::unwrap_used)]
-            let napi_val = napi::bindgen_prelude::ToNapiValue::to_napi_value(
-              env.raw(),
-              once_cell.get().unwrap(),
-            )?;
-            <napi::JsSymbol as napi::bindgen_prelude::FromNapiValue>::from_napi_value(env.raw(), napi_val)?
-          };
-          object.set_property(symbol, identifier)
+          let symbol = once_cell.get().unwrap();
+          properties.push(
+            napi::bindgen_prelude::Property::new()
+              .with_name(env, symbol)?
+              .with_value(&identifier)
+              .with_property_attributes(napi::bindgen_prelude::PropertyAttributes::Configurable),
+          );
+          Ok::<(), napi::Error>(())
         })?;
+        object.define_properties(&properties)?;
 
         Ok(instance)
       }
@@ -243,6 +246,11 @@ macro_rules! impl_module_methods {
 
     #[napi]
     impl $module {
+      #[napi]
+      pub fn readable_identifier(&mut self) -> napi::Result<String> {
+        self.module.readable_identifier()
+      }
+
       #[napi(js_name = "_originalSource", enumerable = false)]
       pub fn original_source(
         &mut self,

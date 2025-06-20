@@ -137,12 +137,15 @@ impl JavaScriptCompiler {
     let src = {
       let mut buf = vec![];
       {
-        let mut wr = Box::new(text_writer::JsWriter::new(
+        let mut w = text_writer::JsWriter::new(
           source_map.clone(),
           "\n",
           &mut buf,
           source_map_config.enable.then_some(&mut src_map_buf),
-        )) as Box<dyn WriteJs>;
+        );
+
+        w.preamble(&format.preamble).into_diagnostic()?;
+        let mut wr = Box::new(w) as Box<dyn WriteJs>;
 
         if minify {
           wr = Box::new(text_writer::omit_trailing_semi(wr));
@@ -166,7 +169,7 @@ impl JavaScriptCompiler {
 
     let map = if source_map_config.enable {
       let combined_source_map =
-        source_map.build_source_map_with_config(&src_map_buf, input_source_map, source_map_config);
+        source_map.build_source_map(&src_map_buf, input_source_map.cloned(), source_map_config);
 
       let mappings = encode_mappings(combined_source_map.tokens().map(|token| Mapping {
         generated_line: token.get_dst_line() + 1,
@@ -195,7 +198,7 @@ impl JavaScriptCompiler {
           .collect::<Vec<_>>(),
         combined_source_map
           .source_contents()
-          .map(Option::unwrap_or_default)
+          .flatten()
           .map(ToString::to_string)
           .collect::<Vec<_>>(),
         combined_source_map

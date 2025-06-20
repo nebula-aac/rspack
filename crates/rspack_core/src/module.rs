@@ -28,12 +28,12 @@ use serde::Serialize;
 
 use crate::{
   concatenated_module::ConcatenatedModule, dependencies_block::dependencies_block_update_hash,
-  AsyncDependenciesBlock, BindingCell, BoxDependency, BoxDependencyTemplate, BoxModuleDependency,
-  ChunkGraph, ChunkUkey, CodeGenerationResult, Compilation, CompilationAsset, CompilationId,
-  CompilerId, CompilerOptions, ConcatenationScope, ConnectionState, Context, ContextModule,
-  DependenciesBlock, DependencyId, ExportInfoGetter, ExportProvided, ExternalModule, ModuleGraph,
-  ModuleLayer, ModuleType, NormalModule, RawModule, Resolve, ResolverFactory, RuntimeSpec,
-  SelfModule, SharedPluginDriver, SourceType,
+  get_target, AsyncDependenciesBlock, BindingCell, BoxDependency, BoxDependencyTemplate,
+  BoxModuleDependency, ChunkGraph, ChunkUkey, CodeGenerationResult, Compilation, CompilationAsset,
+  CompilationId, CompilerId, CompilerOptions, ConcatenationScope, ConnectionState, Context,
+  ContextModule, DependenciesBlock, DependencyId, ExportProvided, ExternalModule, ModuleGraph,
+  ModuleGraphCacheArtifact, ModuleLayer, ModuleType, NormalModule, PrefetchExportsInfoMode,
+  RawModule, Resolve, ResolverFactory, RuntimeSpec, SelfModule, SharedPluginDriver, SourceType,
 };
 
 pub struct BuildContext {
@@ -69,6 +69,10 @@ pub struct BuildInfo {
   pub module_concatenation_bailout: Option<String>,
   pub assets: BindingCell<HashMap<String, CompilationAsset>>,
   pub module: bool,
+  /// Stores external fields from the JS side (Record<string, any>),
+  /// while other properties are stored in KnownBuildInfo.
+  #[cacheable(with=AsPreset)]
+  pub extras: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Default for BuildInfo {
@@ -91,6 +95,7 @@ impl Default for BuildInfo {
       module_concatenation_bailout: None,
       assets: Default::default(),
       module: false,
+      extras: Default::default(),
     }
   }
 }
@@ -274,8 +279,15 @@ pub trait Module:
     self.build_info().module_argument
   }
 
-  fn get_exports_type(&self, module_graph: &ModuleGraph, strict: bool) -> ExportsType {
-    get_exports_type_impl(self.identifier(), self.build_meta(), module_graph, strict)
+  fn get_exports_type(
+    &self,
+    module_graph: &ModuleGraph,
+    module_graph_cache: &ModuleGraphCacheArtifact,
+    strict: bool,
+  ) -> ExportsType {
+    module_graph_cache.cached_get_exports_type((self.identifier(), strict), || {
+      get_exports_type_impl(self.identifier(), self.build_meta(), module_graph, strict)
+    })
   }
 
   fn get_strict_esm_module(&self) -> bool {
@@ -434,16 +446,19 @@ fn get_exports_type_impl(
           }
         }
 
-        if let Some(export_info) =
-          mg.get_read_only_export_info(&identifier, Atom::from("__esModule"))
+        let name = Atom::from("__esModule");
+        let exports_info = mg.get_prefetched_exports_info_optional(
+          &identifier,
+          PrefetchExportsInfoMode::NamedExports(HashSet::from_iter([&name])),
+        );
+        if let Some(export_info) = exports_info
+          .as_ref()
+          .map(|info| info.get_read_only_export_info(&name))
         {
-          if matches!(
-            ExportInfoGetter::provided(export_info.as_data(mg)),
-            Some(ExportProvided::NotProvided)
-          ) {
+          if matches!(export_info.provided(), Some(ExportProvided::NotProvided)) {
             handle_default(default_object)
           } else {
-            let Some(target) = export_info.get_target(mg) else {
+            let Some(target) = get_target(export_info, mg) else {
               return ExportsType::Dynamic;
             };
             if target
